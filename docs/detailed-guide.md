@@ -28,7 +28,9 @@ This guide documents a **practical and realistic approach** to deploying OpenShi
 - Assisted Installer
 - Static IPs (DHCP is possible and supported)
 
-Although Balance SLB is in the GA (general availability) stage, there is no **complete or official documentation** covering this scenario from end to end. What follows is the result of trial, error, and reverse engineering of how Assisted Installer, Ignition, NMState, and OVS interact during **day-0 cluster installation**.
+Although Balance SLB is in general availability (GA), official **documentation does not yet provide complete end-to-end guidance** for this scenario. The steps described here are derived from practical experimentation and a deeper analysis of how Assisted Installer, Ignition, NMState, and OVS behave during **day-0 cluster installation**.
+
+This documentation is intended to complement existing official materials, not replace them.
 
 ---
 
