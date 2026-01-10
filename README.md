@@ -14,7 +14,7 @@ This repository provides manifests and documentation for deploying OpenShift clu
 
 ## Visual Guide
 
-For convenience, there’s also a rendered version with diagrams and screenshots available **[here](https://linuxelite.com.br/blog/openshift-balance-slb/)**. The Git repo remains the canonical source.
+For convenience, there’s also a more detailed guide **[here](docs/detailed-guide.md)**, and a rendered version with diagrams and screenshots available **[here](https://linuxelite.com.br/blog/openshift-balance-slb/)**. The Git repo remains the canonical source.
 
 ## Architecture
 
