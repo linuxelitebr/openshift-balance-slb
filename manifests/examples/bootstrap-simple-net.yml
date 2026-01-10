@@ -1,0 +1,46 @@
+# Simple temporary configuration for initial communication with the node.
+# The NetworkManager setup will be replaced by OVS in the final configuration.
+# Customize IPs, NICs, VLANs and Subnet Mask here.
+interfaces:
+  - name: ens33
+    description: primary 00:50:56:b0:11:93
+    type: ethernet
+    state: up
+    mtu: 9000
+    ipv4:
+      enabled: false
+    ipv6:
+      enabled: false
+  - name: ens34
+    description: secondary 00:50:56:b0:35:61
+    type: ethernet
+    state: up
+    mtu: 9000
+    ipv4:
+      enabled: false
+    ipv6:
+      enabled: false
+  - name: ens33.100
+    type: vlan
+    state: up
+    vlan:
+      base-iface: ens33
+      id: 100
+    mtu: 9000
+    ipv4:
+      enabled: true
+      address:
+        - ip: 10.132.254.11
+          prefix-length: 24
+    ipv6:
+      enabled: false
+dns-resolver:
+  config:
+    server:
+      - 10.132.254.103
+      - 10.132.254.102
+routes:
+  config:
+    - destination: 0.0.0.0/0
+      next-hop-address: 10.132.254.10
+      next-hop-interface: ens33.100
