@@ -17,7 +17,7 @@ set -euo pipefail
 #-------------------------------------------------------------------------------
 # Default Configuration
 #-------------------------------------------------------------------------------
-VERSION="1.5.0"
+VERSION="1.5.1"
 TESTED_OCP_VERSION="4.20.8"
 LOG_FILE="/var/log/ovs-slb-migration.log"
 BACKUP_DIR="/root/backup-migration"
@@ -44,7 +44,7 @@ MTU="9000"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+BLUE='\033[38;5;75m'
 NC='\033[0m' # No Color
 
 log() {

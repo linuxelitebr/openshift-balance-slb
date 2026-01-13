@@ -489,6 +489,17 @@ chmod +x migrate-to-ovs-slb.sh
 
 # Review the output carefully, then run for real
 ./migrate-to-ovs-slb.sh --ip 10.132.254.25
+
+# Full example
+./migrate-to-ovs-slb.sh \
+--ip 10.132.254.25 \
+--prefix 24 \
+--gateway 10.132.254.10 \
+--dns1 10.132.254.103 \
+--dns2 10.132.254.104 \
+--nic1 eno1 \
+--nic2 eno2 \
+--vlan 100
 ```
 
 #### Script Parameters
@@ -520,7 +531,11 @@ reboot
 ```bash
 # SSH now works - connect from bastion
 ssh core@<node-ip>
-sudo /tmp/migrate-to-ovs-slb.sh --validate
+sudo /tmp/migrate-to-ovs-slb.sh \
+--validate \
+--nic1 eno1 \
+--nic2 eno2 \
+--gateway 10.132.254.10
 ```
 
 #### Step 7: Uncordon the Node
