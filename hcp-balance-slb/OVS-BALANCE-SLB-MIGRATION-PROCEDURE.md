@@ -1374,5 +1374,13 @@ routes:
 
 ---
 
+## To do
+
+- Rebalance tuning parameters
+  - Default 10s
+    - Change to 30s
+
+---
+
 *Document maintained by Infrastructure Team*  
 *Last technical review: January 2026*
