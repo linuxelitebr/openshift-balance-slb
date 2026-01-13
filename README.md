@@ -104,6 +104,63 @@ oc debug node/<node> -- chroot /host nmstatectl show
 oc debug node/<node> -- chroot /host nmcli con show
 ```
 
+## Where configuration takes place in coreOS
+
+```
+sh-5.1# systemctl status nmstate-configuration.service
+○ nmstate-configuration.service - Applies per-node NMState network configuration
+     Loaded: loaded (/etc/systemd/system/nmstate-configuration.service; enabled; preset: disabled)
+     Active: inactive (dead) since Sat 2026-01-10 21:15:53 UTC; 14min ago
+   Main PID: 2145 (code=exited, status=0/SUCCESS)
+        CPU: 15ms
+
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com systemd[1]: Finished Applies per-node NMState network configuration.
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + hostname=ocp-dualstack-1
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + host_file=ocp-dualstack-1.yml
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + cluster_file=cluster.yml
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + config_file=
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + '[' -s /etc/nmstate/openshift/ocp-dualstack-1.yml ']'
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + '[' -s /etc/nmstate/openshift/cluster.yml ']'
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + echo 'No configuration found at /etc/nmstate/openshift/ocp-dualstack-1.yml or /etc/nmstate/openshift/cluster.yml'
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: No configuration found at /etc/nmstate/openshift/ocp-dualstack-1.yml or /etc/nmstate/openshift/cluster.yml
+Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + exit 0
+
+
+
+# Renomear os arquivos para hostname curto
+cd /etc/nmstate/openshift/
+mv ocp-dualstack-0.baremetalbr.com.yml ocp-dualstack-0.yml
+mv ocp-dualstack-1.baremetalbr.com.yml ocp-dualstack-1.yml
+mv ocp-dualstack-2.baremetalbr.com.yml ocp-dualstack-2.yml
+
+# Remover o flag "applied" se existir
+rm -f /etc/nmstate/openshift/applied
+
+# Re-executar o serviço
+systemctl restart nmstate-configuration.service
+
+# Verificar
+systemctl status nmstate-configuration.service
+
+# Ver se applied existe (impede re-execução)
+cat /etc/nmstate/openshift/applied
+
+# Ver configuração atual do nmstate
+cat /etc/nmstate/*.yml
+
+# Reboot
+
+# Verificar se os arquivos nmstate ainda existem
+ls -la /etc/nmstate/openshift/
+
+# Status do serviço
+systemctl status nmstate-configuration.service
+
+# Logs do boot
+journalctl -u nmstate-configuration.service -b
+journalctl -u ovs-configuration.service -b
+```
+
 ## Documentation
 
 - [Detailed Deployment Guide](docs/detailed-guide.md)

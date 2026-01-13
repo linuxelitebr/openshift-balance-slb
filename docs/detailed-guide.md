@@ -184,17 +184,26 @@ When using **static IPs + custom NMState manifests**:
 
 #### The Filename Must Exactly Match
 
-- The hostname shown in the Assisted Installer UI
-- The output of `hostname` on the node
+- The **short hostname** of the node shown in the Assisted Installer UI
+- The output of `hostname -s` on the node
 
-In some environments, this means **FQDN**, not short hostname. For others, it's the short hostname.
+<!-- In some environments, this means **FQDN**, not short hostname. For others, it's the short hostname. -->
 
 ```sh
-$ hostname
-node.example.com
+$ hostname -s
+ocp-node-0
 ```
 
 > If the filename does not match exactly, Ignition will **silently skip** the configuration and the install will fail around ~53%.
+
+The script that configures the network via nmstate (`nmstate-configuration.sh`) looks for files like these:
+
+```sh
+$ systemctl status nmstate-configuration.service
+(...)
+nmstate-configuration.sh[2145]: + '[' -s /etc/nmstate/openshift/ocp-dualstack-1.yml ']'
+nmstate-configuration.sh[2145]: + '[' -s /etc/nmstate/openshift/cluster.yml ']'
+```
 
 Each node **requires its own YAML file**.
 
@@ -233,9 +242,9 @@ This configuration is **deterministic** and reproducible.
 
 ### Step 6: Generate MachineConfigs
 
-Each node's NMState file is Base64-encoded and injected into the MachineConfig. A script is provided to automate this process.
+Each node's `NMState` file is **Base64-encoded** and injected into the `MachineConfig`. A script is provided to automate this process.
 
-> The filenames **must match exactly** the Assisted Installer UI.
+<!-- >> The filenames **must match exactly** the Assisted Installer UI. -->
 
 #### 6.1: Create NMState files for each node
 
@@ -249,9 +258,9 @@ Use the file `manifests/examples/nmstate-node-example.yml` as a template. For ea
 Example structure:
 ```
 nmstate/
-├── ocp-node-0.example.com.yml
-├── ocp-node-1.example.com.yml
-└── ocp-node-2.example.com.yml
+├── ocp-node-0.yml
+├── ocp-node-1.yml
+└── ocp-node-2.yml
 ```
 
 #### 6.2: Configure nodes.conf
@@ -265,14 +274,20 @@ cp scripts/nodes.conf.example nodes.conf
 Edit `nodes.conf`:
 ```
 # Format: <hostname> <role>
-ocp-node-0.example.com master
-ocp-node-1.example.com master
-ocp-node-2.example.com master
-ocp-node-3.example.com worker
-ocp-node-4.example.com worker
+ocp-node-0 master
+ocp-node-1 master
+ocp-node-2 master
+ocp-node-3 worker
+ocp-node-4 worker
 ```
 
-> The hostname must match exactly what Assisted Installer discovered.
+<!-- >> The hostname must match exactly what Assisted Installer discovered. -->
+STP?
+
+    bridge:
+      options:
+        stp: true    
+      allow-extra-patch-ports: true
 
 #### 6.3: Generate MachineConfigs
 
