@@ -82,9 +82,10 @@ oc adm cordon $NODE
 oc get vmi -A -o wide | grep $NODE
 
 # If VMs exist, migrate to other nodes (optional but recommended)
-oc get vmi -A -o json | jq -r --arg node "$NODE" \
-  '.items[] | select(.status.nodeName==$node) | "-n \(.metadata.namespace) \(.metadata.name)"' | \
-  xargs -I {} virtctl migrate {}
+for vm in $(oc get vmi -A -o jsonpath="{.items[?(@.status.nodeName=='${NODE}')].metadata.name}"); do
+  ns=$(oc get vmi -A -o jsonpath="{.items[?(@.metadata.name=='${vm}')].metadata.namespace}")
+  virtctl migrate -n $ns $vm
+done
 
 # Wait for VM migrations
 oc get vmi -A -o wide | grep $NODE
