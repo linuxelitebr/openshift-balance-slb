@@ -3,7 +3,7 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.0 |
+| Version | 1.1 |
 | Tested on | OpenShift 4.20.8 |
 | Estimated time | 30-45 min per node |
 
@@ -19,7 +19,48 @@
 
 ---
 
-## Phase 1: Preparation (One Time Only)
+## Phase 0: Prepare Labels (One Time Only)
+
+> **⚠️ CRITICAL**: This must be done BEFORE any migration to avoid NNCP conflicts.
+
+### 0.1 Add Label to ALL Workers
+
+```bash
+# Add label to all workers as "not migrated"
+for node in $(oc get nodes -l node-role.kubernetes.io/worker -o name); do
+  oc label $node balance-slb-migrated=false --overwrite
+done
+
+# Verify
+oc get nodes -l node-role.kubernetes.io/worker --show-labels | grep balance-slb
+```
+
+### 0.2 Modify Original NNCP
+
+Add selector to exclude migrated nodes from the original br-vmdata NNCP:
+
+```bash
+oc patch nncp br-vmdata --type=merge -p '
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+    balance-slb-migrated: "false"
+'
+```
+
+Verify:
+
+```bash
+oc get nncp br-vmdata -o yaml | grep -A3 nodeSelector
+# Should show:
+#   nodeSelector:
+#     node-role.kubernetes.io/worker: ""
+#     balance-slb-migrated: "false"
+```
+
+---
+
+## Phase 1: Create Migration NNCP (One Time Only)
 
 ### 1.1 Create Migration NNCP
 
@@ -49,7 +90,7 @@ EOF
 
 ```bash
 oc get nncp br-vmdata-migrated
-# Should exist, but no NNCE yet (no node has the label)
+# Should exist, but no NNCE yet (no node has label = true)
 
 oc get nnce | grep br-vmdata-migrated
 # (empty - expected)
@@ -88,7 +129,7 @@ for vm in $(oc get vmi -A -o jsonpath="{.items[?(@.status.nodeName=='${NODE}')].
 done
 
 # Wait for VM migrations
-oc get vmi -A -o wide | grep $NODE
+watch "oc get vmi -A -o wide | grep $NODE"
 # (should be empty)
 ```
 
@@ -121,8 +162,8 @@ reboot
 oc get node $NODE -w
 # Wait for Ready status
 
-# Apply label to trigger NNCP
-oc label node $NODE balance-slb-migrated=true
+# Change label to trigger migration NNCP
+oc label node $NODE balance-slb-migrated=true --overwrite
 
 # Wait for NNCE
 oc get nnce -w | grep $NODE
@@ -172,7 +213,7 @@ Repeat **Phase 2** (steps 2.1 to 2.6) for each worker.
 oc get nodes -l balance-slb-migrated=true
 
 # Nodes pending
-oc get nodes -l node-role.kubernetes.io/worker,balance-slb-migrated!=true
+oc get nodes -l balance-slb-migrated=false
 
 # NNCE status
 oc get nnce | grep br-vmdata-migrated
@@ -182,7 +223,7 @@ oc get nnce | grep br-vmdata-migrated
 
 ## Phase 4: Finalization (After All Nodes)
 
-### 4.1 Change Selector to All Workers
+### 4.1 Change Migration NNCP Selector to All Workers
 
 ```bash
 oc patch nncp br-vmdata-migrated --type=merge -p '
@@ -223,7 +264,7 @@ oc get vmi -A
 |---------|-------|----------|
 | SSH won't connect during migration | Network reconfiguration | Use console (iLO/iDRAC) |
 | NNCE doesn't appear after label | Slow operator | `oc get nnce -w`, wait |
-| br-vmdata still exists | NNCE not applied | Check `oc get nnce`, check logs |
+| br-vmdata keeps coming back | NNCP conflict | Verify original NNCP has `balance-slb-migrated: "false"` selector |
 | VM has no network | Incorrect bridge-mapping | Verify `ovn-bridge-mappings` |
 | Node NotReady after reboot | Incorrect MTU | Verify MTU 9000 on br-ex |
 
@@ -241,12 +282,18 @@ oc get nnce $NODE.br-vmdata-migrated -o yaml
 
 ## Quick Checklist
 
+Before starting (one time):
+
+- [ ] Label all workers: `balance-slb-migrated=false`
+- [ ] Patch original NNCP with `balance-slb-migrated: "false"` selector
+- [ ] Create migration NNCP `br-vmdata-migrated`
+
 Per node:
 
 - [ ] `oc adm cordon $NODE`
 - [ ] Migrate VMs (optional)
 - [ ] Console: `./migrate-to-ovs-slb.sh` + `reboot`
-- [ ] `oc label node $NODE balance-slb-migrated=true`
+- [ ] `oc label node $NODE balance-slb-migrated=true --overwrite`
 - [ ] Wait for NNCE Available
 - [ ] Validate: bridges, bond, mapping
 - [ ] `oc adm uncordon $NODE`
@@ -254,7 +301,7 @@ Per node:
 
 After all nodes:
 
-- [ ] Patch NNCP to `node-role.kubernetes.io/worker`
+- [ ] Patch migration NNCP to `node-role.kubernetes.io/worker`
 - [ ] Delete original NNCP `br-vmdata`
 - [ ] Final validation
 
