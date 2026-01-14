@@ -1165,7 +1165,11 @@ nmstatectl apply /etc/nmstate/$(hostname -s).yml
 # Verify
 ovs-vsctl list-br
 ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
+
+# For your information only, bridge mapping configuration can be done as follows:
+ovs-vsctl set Open_vSwitch . external_ids:ovn-bridge-mappings="vmnet:br-phy,physnet:br-ex"
 ```
+
 
 ### Create NAD
 
