@@ -11,7 +11,7 @@
 
 set -uo pipefail
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 
 #-------------------------------------------------------------------------------
 # Color Output
@@ -19,7 +19,7 @@ VERSION="1.0.0"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+BLUE='\033[38;5;75m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
@@ -163,16 +163,20 @@ check_node() {
     fi
     
     # Check if members are enabled
-    local enabled_count=$(echo "$bond_output" | grep -c "may_enable: true" || echo "0")
-    if [[ "$enabled_count" -ge 2 ]]; then
+    local enabled_count=$(echo "$bond_output" | grep -c "may_enable: true" 2>/dev/null || echo "0")
+    enabled_count=$(echo "$enabled_count" | tr -d '\n' | head -c 10)
+    enabled_count=${enabled_count:-0}
+    if [[ "$enabled_count" =~ ^[0-9]+$ ]] && [[ "$enabled_count" -ge 2 ]]; then
         bond_status="OK"
     else
         bond_status="DEGRADED"
     fi
     
     # Get MTU info
-    local mtu_output=$(oc debug node/"$node" --quiet -- chroot /host ip link show br-ex 2>/dev/null | grep -oP 'mtu \K[0-9]+' || echo "0")
-    if [[ "$mtu_output" -ge 9000 ]]; then
+    local mtu_output=$(oc debug node/"$node" --quiet -- chroot /host ip link show br-ex 2>/dev/null | grep -oP 'mtu \K[0-9]+' | head -1 || echo "0")
+    mtu_output=$(echo "$mtu_output" | tr -d '\n')
+    mtu_output=${mtu_output:-0}
+    if [[ "$mtu_output" =~ ^[0-9]+$ ]] && [[ "$mtu_output" -ge 9000 ]]; then
         mtu_status="9000"
     else
         mtu_status="$mtu_output"
@@ -242,11 +246,16 @@ main() {
             printf "%-40s ${RED}%-15s${NC} %-10s %-8s %-15s\n" "$node" "NO BOND" "-" "-" "-"
             ((not_configured++))
         else
-            local bond_mode=$(echo "$result" | cut -d'|' -f1)
-            local bond_status=$(echo "$result" | cut -d'|' -f2)
-            local mtu=$(echo "$result" | cut -d'|' -f3)
-            local ip=$(echo "$result" | cut -d'|' -f4)
-            local members=$(echo "$result" | cut -d'|' -f5)
+            # Extract and sanitize values (remove newlines)
+            local bond_mode=$(echo "$result" | cut -d'|' -f1 | tr -d '\n')
+            local bond_status=$(echo "$result" | cut -d'|' -f2 | tr -d '\n')
+            local mtu=$(echo "$result" | cut -d'|' -f3 | tr -d '\n')
+            local ip=$(echo "$result" | cut -d'|' -f4 | tr -d '\n')
+            local members=$(echo "$result" | cut -d'|' -f5 | tr -d '\n')
+            
+            # Default values if empty
+            mtu=${mtu:-0}
+            members=${members:-0}
             
             # Determine color based on bond mode
             local mode_color=""
@@ -269,7 +278,7 @@ main() {
             
             # MTU color
             local mtu_color=""
-            if [[ "$mtu" -ge 9000 ]]; then
+            if [[ "$mtu" =~ ^[0-9]+$ ]] && [[ "$mtu" -ge 9000 ]]; then
                 mtu_color="${GREEN}"
             else
                 mtu_color="${YELLOW}"

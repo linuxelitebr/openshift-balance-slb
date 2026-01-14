@@ -5,7 +5,7 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.1 |
+| Version | 1.4 |
 | Tested On | OpenShift 4.20.8 (HCP Agent Nodes) |
 | Last Updated | January 2026 |
 | Prerequisites | OVS Balance-SLB migration completed |
@@ -17,7 +17,7 @@
 1. [Overview](#1-overview)
 2. [Architecture](#2-architecture)
 3. [Prerequisites](#3-prerequisites)
-4. [Migrating from br-vmdata](#4-migrating-from-br-vmdata)
+4. [Migrating from br-vmdata](#4-migrating-from-br-vmdata) *(skip if new cluster)*
 5. [Configuration Procedure](#5-configuration-procedure)
 6. [Creating NetworkAttachmentDefinitions](#6-creating-networkattachmentdefinitions)
 7. [Attaching VMs to Networks](#7-attaching-vms-to-networks)
@@ -150,21 +150,51 @@ ovs-vsctl show
 
 If your cluster previously used a dedicated `br-vmdata` bridge, you must migrate it. See [Section 4: Migrating from br-vmdata](#4-migrating-from-br-vmdata).
 
-```bash
-# Check if br-vmdata exists
-ovs-vsctl list-br | grep br-vmdata
+Check if **br-vmdata** exists:
 
-# Check current bridge-mappings
+```bash
+ovs-vsctl list-br | grep br-vmdata
+```
+
+Check current bridge-mappings:
+
+```bash
 ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
+
+"physnet:br-ex,vmnet:br-vmdata"
 ```
 
 ---
 
 ## 4. Migrating from br-vmdata
 
+> **NEW CLUSTERS**: If you are deploying a **new cluster** with `balance-slb` from the start (no existing `br-vmdata`), **skip this entire section**. Simply configure the `bridge-mapping` NNCP directly:
+>
+> ```yaml
+> apiVersion: nmstate.io/v1
+> kind: NodeNetworkConfigurationPolicy
+> metadata:
+>   name: vmnet-bridge-mapping
+> spec:
+>   nodeSelector:
+>     node-role.kubernetes.io/worker: ''
+>   desiredState:
+>     ovn:
+>       bridge-mappings:
+>       - bridge: br-phy
+>         localnet: vmnet
+>         state: present
+> ```
+>
+> Then proceed directly to [Section 6: Creating NetworkAttachmentDefinitions](#6-creating-networkattachmentdefinitions).
+
+---
+
+This section is only for clusters that have an **existing br-vmdata bridge** that needs to be migrated.
+
 ### 4.1 The Problem
 
-If your cluster had a dedicated `br-vmdata` bridge using `bond0` as port, the migration to balance-slb creates an issue:
+If your cluster had a dedicated `br-vmdata` bridge using `bond0` as port, the migration to `balance-slb` creates an issue:
 
 ```mermaid
 flowchart TB
@@ -173,7 +203,10 @@ flowchart TB
         BOND0 --> BRVMDATA1["br-vmdata<br/>bridge-mapping: vmnet"]
         BOND0 --> BREX1["br-ex"]
     end
-    
+```
+
+```mermaid
+flowchart TB
     subgraph After["After Migration (Problem)"]
         OVSBOND["ovs-bond (balance-slb)"]
         OVSBOND --> BRPHY["br-phy"]
@@ -216,20 +249,24 @@ flowchart TB
 
 Before migrating any node, document current state:
 
-```bash
+```sh
+vi bkp.sh
+```
+
+```sh
 # Create inventory file
-cat > vmnet-inventory.txt << 'EOF'
+cat > vmnet-inventory.txt << EOF
 === VM Network Inventory ===
 Date: $(date)
 EOF
 
 # Document NADs
 echo -e "\n=== NetworkAttachmentDefinitions ===" >> vmnet-inventory.txt
-oc get net-attach-def -A >> vmnet-inventory.txt
+oc get net-attach-def -A >> vmnet-inventory.txt 2>&1
 
 # Document NAD details
 echo -e "\n=== NAD Configurations ===" >> vmnet-inventory.txt
-oc get net-attach-def -A -o yaml >> vmnet-inventory.txt
+oc get net-attach-def -A -o yaml >> vmnet-inventory.txt 2>&1
 
 # Document current bridge-mappings per node
 echo -e "\n=== Bridge Mappings per Node ===" >> vmnet-inventory.txt
@@ -250,6 +287,11 @@ echo "Inventory saved to vmnet-inventory.txt"
 echo "NAD backup saved to nads-backup.yaml"
 ```
 
+```sh
+chmod +x bkp.sh
+./bkp.sh
+```
+
 ### 4.4 Migration Procedure (Per Node)
 
 Execute these steps for each node, one at a time:
@@ -262,13 +304,17 @@ oc adm cordon <node-name>
 
 # Optional: Live migrate VMs to other nodes
 # This avoids VM downtime during node migration
-for vm in $(oc get vmi -A --field-selector spec.nodeName=<node-name> -o name); do
-  virtctl migrate $vm
+NODE="<node-name>"
+for vm in $(oc get vmi -A -o jsonpath="{.items[?(@.status.nodeName=='${NODE}')].metadata.name}"); do
+  ns=$(oc get vmi -A -o jsonpath="{.items[?(@.metadata.name=='${vm}')].metadata.namespace}")
+  virtctl migrate -n $ns $vm
 done
 
 # Wait for migrations to complete
-oc get vmi -A -w
+watch -d oc get vmi -A
 ```
+
+> **NOTE**: If the cluster does not support live migration, stop/start the VMs running on the node that will be reconfigured to balance-slb. This will cause the VMs to run on a node that is not cordoned.
 
 #### Step 2: Run Balance-SLB Migration
 
@@ -281,6 +327,10 @@ reboot
 ```
 
 #### Step 3: Post-Reboot Cleanup
+
+> **IMPORTANT**: If your `br-vmdata` was created via NNCP (NodeNetworkConfigurationPolicy), **skip this step** and follow [Section 4.7: Migrating br-vmdata Created via NNCP](#47-migrating-br-vmdata-created-via-nncp) instead. Manual removal will be reverted by the kubernetes-nmstate operator.
+
+For clusters where br-vmdata was created manually (not via NNCP):
 
 ```bash
 # SSH to node (now works)
@@ -301,6 +351,10 @@ ovs-vsctl list-br
 ```
 
 #### Step 4: Configure Bridge-Mapping
+
+> **Note**: If using the NNCP approach (Section 4.7), the bridge-mapping is configured automatically by the migration NNCP when you change the node label. Skip this step.
+
+For manual configuration:
 
 ```bash
 # Verify nmstate file has ovn section
@@ -353,6 +407,8 @@ ping <vlan-gateway>
 
 ### 4.5 Migration Checklist
 
+> **Note**: Steps 7-8 differ depending on whether br-vmdata was created via NNCP. See [Section 4.7](#47-migrating-br-vmdata-created-via-nncp) for the NNCP workflow.
+
 | Step | Action | Verification |
 |------|--------|--------------|
 | 1 | Create inventory | `cat vmnet-inventory.txt` |
@@ -361,8 +417,8 @@ ping <vlan-gateway>
 | 4 | Migrate VMs (optional) | `oc get vmi -A` shows VMs on other nodes |
 | 5 | Run balance-slb migration | Script completes successfully |
 | 6 | Reboot | Node comes back up |
-| 7 | Remove br-vmdata | `ovs-vsctl list-br` shows no br-vmdata |
-| 8 | Add bridge-mapping | `ovs-vsctl get ... ovn-bridge-mappings` shows `vmnet:br-phy` |
+| 7 | Remove br-vmdata | Manual: `ovs-vsctl del-br` / NNCP: change label |
+| 8 | Add bridge-mapping | Manual: `nmstatectl apply` / NNCP: automatic |
 | 9 | Validate | `--validate` passes |
 | 10 | Uncordon | Node is Ready and schedulable |
 | 11 | Test VMs | VMs have connectivity |
@@ -375,9 +431,209 @@ ping <vlan-gateway>
 - **One node at a time**: Ensure each node is fully working before proceeding
 - **VM live migration**: If possible, migrate VMs before node maintenance to avoid downtime
 
+### 4.7 Migrating br-vmdata Created via NNCP
+
+> **IMPORTANT**: If your `br-vmdata` was created using a NodeNetworkConfigurationPolicy (NNCP), you **cannot** simply remove it with `ovs-vsctl del-br`. The kubernetes-nmstate operator will recreate it. You must manage the removal via NNCP.
+
+#### The Challenge
+
+When br-vmdata is managed by NNCP:
+- Manual removal is reverted by the operator
+- The original NNCP continues to apply to all matching nodes
+- You need a controlled, per-node migration strategy
+
+#### Solution: matchExpressions with Hostname Selector
+
+Use `matchExpressions` with `kubernetes.io/hostname` to control which nodes receive the migration configuration. This approach is elegant because:
+
+- **Single NNCP** manages the entire migration
+- **Granular control** - add one hostname at a time
+- **Visual history** - the NNCP shows which nodes are migrated
+- **No prerequisites** - no need to configure labels beforehand
+
+```mermaid
+flowchart TB
+    subgraph Phase1["Phase 1: Controlled Migration"]
+        P1["matchExpressions:<br/>hostname In [worker-01]"]
+        P1 --> P2["Add worker-02"]
+        P2 --> P3["Add worker-03"]
+        P3 --> P4["..."]
+    end
+    
+    subgraph Phase2["Phase 2: Finalization"]
+        F1["nodeSelector:<br/>node-role.kubernetes.io/worker: ''"]
+        F2["New workers auto-configured"]
+    end
+    
+    Phase1 --> Phase2
+```
+
+#### Step 1: Create Migration NNCP
+
+Create a new NNCP that targets specific nodes by label:
+
+```yaml
+cat <<EOF | oc apply -f -
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: br-vmdata-migrated
+spec:
+  nodeSelector:
+    balance-slb-migrated: 'true'
+  desiredState:
+    interfaces:
+    - name: br-vmdata
+      type: ovs-bridge
+      state: absent
+    ovn:
+      bridge-mappings:
+      - bridge: br-phy
+        localnet: vmnet
+        state: present
+EOF
+```
+
+Apply the NNCP:
+
+```bash
+oc apply -f br-vmdata-migrated-nncp.yaml
+```
+
+#### Step 2: Per-Node Migration Workflow
+
+For each node you want to migrate:
+
+```bash
+# 1. Cordon the node
+oc adm cordon <node-name>
+
+# 2. Optional: Live migrate VMs away
+NODE="<node-name>"
+for vm in $(oc get vmi -A -o jsonpath="{.items[?(@.status.nodeName=='${NODE}')].metadata.name}"); do
+  ns=$(oc get vmi -A -o jsonpath="{.items[?(@.metadata.name=='${vm}')].metadata.namespace}")
+  virtctl migrate -n $ns $vm
+done
+
+watch -d oc get vmi -A
+
+# 3. Run balance-slb migration (via console, NOT SSH!)
+#    ./migrate-to-ovs-slb.sh --ip <NODE_IP>
+#    reboot
+
+# 4. After reboot, add node label to node
+oc label node ocp-dualstack-10.baremetalbr.com balance-slb-migrated=true
+# This will apply the NNCP configuration to the node, disabling the OVS Bridge br-vmdata, and enabling an OVN bridge-mapping for bridge br-phy.
+
+# 5. Wait for NNCE to apply
+oc get nnce -w | grep br-vmdata-migrated
+
+# 6. Verify br-vmdata is removed and bridge-mapping is correct
+oc debug node/<node-name> -- chroot /host ovs-vsctl list-br
+# Expected: br-ex, br-int, br-phy (NO br-vmdata)
+
+oc debug node/<node-name> -- chroot /host \
+  ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
+# Expected: "vmnet:br-phy"
+
+# 7. Uncordon the node
+oc adm uncordon <node-name>
+
+# 8. Test VM connectivity
+virtctl console <vm-name>
+# ping gateway, etc.
+```
+
+#### Step 3: Progress Tracking
+
+Keep track of the nodes that have been labeled for reconfiguration with balance-slb. Gradually reintroduce VMs to them.
+
+Check progress:
+
+```bash
+# Check NNCE status for all targeted nodes
+oc get nnce | grep br-vmdata-migrated
+```
+
+#### Step 4: Finalize - Switch to Generic Selector
+
+After **all workers are migrated**, change the selector to target all workers automatically. This ensures new nodes joining the cluster will also receive the configuration.
+
+```bash
+oc edit nncp br-vmdata-migrated
+```
+
+Change from:
+
+```yaml
+spec:
+  nodeSelector:
+    balance-slb-migrated: "true"
+```
+
+To:
+
+```yaml
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ''
+```
+
+Final NNCP:
+
+```yaml
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: br-vmdata-migrated
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ''       # All workers (including future nodes)
+  desiredState:
+    interfaces:
+    - name: br-vmdata
+      type: ovs-bridge
+      state: absent
+    ovn:
+      bridge-mappings:
+      - bridge: br-phy
+        localnet: vmnet
+        state: present
+```
+
+#### Step 5: Clean Up Original NNCP
+
+Once all nodes are migrated and the selector is generic, delete the original br-vmdata NNCP (if it still exists):
+
+```bash
+# Verify no nodes are using original NNCP
+oc get nnce | grep br-vmdata
+
+# Delete original NNCP
+oc delete nncp br-vmdata
+```
+
+#### NNCP Migration Checklist
+
+| Step | Action | Verification |
+|------|--------|--------------|
+| 1 | Create migration NNCP with first hostname | `oc get nncp br-vmdata-migrated` |
+| 2 | Cordon node | Node shows SchedulingDisabled |
+| 3 | Run balance-slb migration (console) | Script completes, node reboots |
+| 4 | Add hostname to NNCP values | `oc edit nncp br-vmdata-migrated` |
+| 5 | Wait for NNCE | `oc get nnce` shows Available |
+| 6 | Verify br-vmdata removed | `ovs-vsctl list-br` shows no br-vmdata |
+| 7 | Verify bridge-mapping | Shows `vmnet:br-phy` |
+| 8 | Uncordon and test | VMs have connectivity |
+| 9 | Repeat for each node | Add hostname to values |
+| 10 | Finalize: change to worker selector | `oc edit nncp` |
+| 11 | Delete original NNCP | `oc delete nncp br-vmdata` |
+
 ---
 
 ## 5. Configuration Procedure
+
+If you are setting up a **new cluster that has never had** `br-vmdata` configured, you can configure the ovn bridge-mappings directly, without the need to use an NNCP.
 
 ### 5.1 Add Bridge-Mapping to nmstate
 
@@ -1012,4 +1268,3 @@ flowchart TB
 
 *Document maintained by Infrastructure Team*  
 *Last updated: January 2026*
-

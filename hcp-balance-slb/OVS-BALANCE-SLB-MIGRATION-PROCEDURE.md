@@ -216,7 +216,7 @@ flowchart TB
 
 ### MANDATORY: Console Access
 
-> **CRITICAL**: The migration script MUST be run from a local console (VMware Console, IPMI/iLO/iDRAC KVM, or physical keyboard). SSH sessions WILL be disconnected when nmstate reconfigures the network stack.
+> **CRITICAL**: The migration script MUST be run from a local console (IPMI/iLO/iDRAC KVM, or physical keyboard). SSH sessions WILL be disconnected when nmstate reconfigures the network stack.
 
 ### Pre-Migration Checklist
 
@@ -485,12 +485,6 @@ chmod +x migrate-to-ovs-slb.sh
 
 ```bash
 # Dry-run to verify configuration without making changes
-./migrate-to-ovs-slb.sh --ip 10.132.254.25 --dry-run
-
-# Review the output carefully, then run for real
-./migrate-to-ovs-slb.sh --ip 10.132.254.25
-
-# Full example
 ./migrate-to-ovs-slb.sh \
 --ip 10.132.254.25 \
 --prefix 24 \
@@ -499,8 +493,11 @@ chmod +x migrate-to-ovs-slb.sh
 --dns2 10.132.254.104 \
 --nic1 eno1 \
 --nic2 eno2 \
---vlan 100
+--vlan 100 --dry-run
 ```
+
+Carefully **review the result**, and then execute it for real (remove the `--dry-run` parameter from the command).
+
 
 #### Script Parameters
 
@@ -539,6 +536,8 @@ sudo /tmp/migrate-to-ovs-slb.sh \
 ```
 
 #### Step 7: Uncordon the Node
+
+> **IMPORTANT**: If you are reconfiguring a cluster that uses `br-vmdata`, make sure to adjust the node’s NNCP before uncordoning to avoid VM downtime.
 
 ```bash
 # From bastion, after validation passes
