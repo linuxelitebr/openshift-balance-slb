@@ -122,11 +122,16 @@ oc adm cordon $NODE
 # Check VMs on node
 oc get vmi -A -o wide | grep $NODE
 
-# If VMs exist, migrate to other nodes (optional but recommended)
+# Drain the node
+oc adm drain $NODE --ignore-daemonsets --delete-emptydir-data --force
+
+
+# Or just migrate the VMs (if VMs exist) to other nodes (optional but recommended)
 for vm in $(oc get vmi -A -o jsonpath="{.items[?(@.status.nodeName=='${NODE}')].metadata.name}"); do
   ns=$(oc get vmi -A -o jsonpath="{.items[?(@.metadata.name=='${vm}')].metadata.namespace}")
   virtctl migrate -n $ns $vm
 done
+
 
 # Wait for VM migrations
 watch "oc get vmi -A -o wide | grep $NODE"
