@@ -122,9 +122,10 @@ oc adm cordon $NODE
 # Check VMs on node
 oc get vmi -A -o wide | grep $NODE
 
+## You have two options here: ##
+
 # Drain the node
 oc adm drain $NODE --ignore-daemonsets --delete-emptydir-data --force
-
 
 # Or just migrate the VMs (if VMs exist) to other nodes (optional but recommended)
 for vm in $(oc get vmi -A -o jsonpath="{.items[?(@.status.nodeName=='${NODE}')].metadata.name}"); do
