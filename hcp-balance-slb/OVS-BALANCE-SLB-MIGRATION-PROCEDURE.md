@@ -29,7 +29,15 @@
 
 ## 1. Overview
 
-This document describes the procedure to migrate OpenShift HCP (Hosted Control Planes) agent-based worker nodes from standard Linux bonding to OVS (Open vSwitch) balance-slb bonding.
+This document describes the procedure to migrate OpenShift HCP (Hosted Control Planes) worker nodes from standard Linux bonding to OVS (Open vSwitch) balance-slb bonding.
+
+Today, customers who need NIC redundancy with only two NICs on bare metal Hosted Control Planes are unable to configure balance-slb end-to-end using only the documented flows.
+
+OVS balance-slb is already a supported and GA mode in OpenShift. What does not yet exist is a documented and specific procedure for Hosted Control Planes in scenarios with only two NICs.
+
+The process developed does not introduce new mechanisms or change the OpenShift network model. It simply applies, in an explicit and controlled manner, the same configurations that OpenShift already applies automatically in traditional flows, reusing the same files and resources already managed by the product.
+
+The goal is not to replace official documentation, but to provide a safe and consistent path until there is an officially documented end-to-end procedure for HCP.
 
 ### Target Environment
 
