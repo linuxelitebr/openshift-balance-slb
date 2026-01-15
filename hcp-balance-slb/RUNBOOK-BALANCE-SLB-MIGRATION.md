@@ -271,6 +271,115 @@ oc get vmi -A
 
 ---
 
+## Phase 5: Bond Tuning (Optional)
+
+> **INFO**: This phase is optional. The default `bond-rebalance-interval` of 10 seconds works well for most environments.
+
+OVS balance-slb periodically rebalances traffic across links based on utilization. The default interval is 10 seconds. For environments with stable, long-running VMs, increasing to 30 seconds reduces rebalancing overhead.
+
+> **Note**: This tuning does not affect failover time. Link failure detection remains under 100ms regardless of rebalance interval.
+
+### 5.1 Why Tune the Rebalance Interval?
+
+| Interval | Use Case |
+|----------|----------|
+| **10s** (default) | Dynamic environments, frequent VM creation/deletion |
+| **30s** (tuned) | Stable VMs, large environments, bursty traffic patterns |
+
+### 5.2 Create ConfigMap with MachineConfig
+
+For HCP clusters, use ConfigMap to inject a systemd unit:
+
+```bash
+# Set your hosted cluster namespace
+export HC_NAMESPACE="<hosted-cluster-namespace>"
+
+# Create ConfigMap
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ovs-bond-tuning
+  namespace: ${HC_NAMESPACE}
+data:
+  config: |
+    apiVersion: machineconfiguration.openshift.io/v1
+    kind: MachineConfig
+    metadata:
+      labels:
+        machineconfiguration.openshift.io/role: worker
+      name: 99-ovs-bond-tuning
+    spec:
+      config:
+        ignition:
+          version: 3.2.0
+        systemd:
+          units:
+          - name: ovs-bond-tuning.service
+            enabled: true
+            contents: |
+              [Unit]
+              Description=OVS Bond Rebalance Interval Tuning
+              After=openvswitch.service ovs-vswitchd.service
+              Requires=openvswitch.service
+
+              [Service]
+              Type=oneshot
+              ExecStartPre=/usr/bin/sleep 5
+              ExecStart=/usr/bin/ovs-vsctl set port ovs-bond other_config:bond-rebalance-interval=30000
+              RemainAfterExit=yes
+
+              [Install]
+              WantedBy=multi-user.target
+EOF
+```
+
+### 5.3 Reference ConfigMap in NodePool
+
+```bash
+# Get NodePool name
+oc get nodepool -n $HC_NAMESPACE
+
+# Edit NodePool to add config reference
+oc edit nodepool <nodepool-name> -n $HC_NAMESPACE
+```
+
+Add under `spec`:
+
+```yaml
+spec:
+  config:
+  - name: ovs-bond-tuning
+```
+
+### 5.4 Wait for Rollout
+
+The NodePool will trigger a rolling update of worker nodes:
+
+```bash
+# Watch node updates
+oc get nodes -w
+
+# Check NodePool status
+oc get nodepool -n $HC_NAMESPACE
+```
+
+### 5.5 Verify Tuning
+
+After nodes are updated:
+
+```bash
+# Check on each node
+for node in $(oc get nodes -l node-role.kubernetes.io/worker -o name | cut -d/ -f2); do
+  echo "=== $node ==="
+  oc debug node/$node -- chroot /host ovs-vsctl get port ovs-bond other_config 2>/dev/null
+done
+
+# Expected output includes: bond-rebalance-interval="30000"
+```
+
+---
+
 ## Quick Troubleshooting
 
 | Problem | Cause | Solution |
