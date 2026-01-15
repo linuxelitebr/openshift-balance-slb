@@ -154,7 +154,15 @@ cd /tmp
 ./migrate-to-ovs-slb.sh --ip $NODE_IP --nic1 <NIC1> --nic2 <NIC2> --gateway <GW> --prefix <PREFIX>
 
 # Real example:
-./migrate-to-ovs-slb.sh --ip 10.132.254.25 --nic1 eno1 --nic2 eno2 --gateway 10.132.254.254 --prefix 24
+./migrate-to-ovs-slb.sh \
+--ip 10.132.254.25 \
+--prefix 24 \
+--gateway 10.132.254.10 \
+--dns1 10.132.254.103 \
+--dns2 10.132.254.104 \
+--nic1 eno1 \
+--nic2 eno2 \
+--vlan 100
 
 # Mandatory reboot
 reboot
