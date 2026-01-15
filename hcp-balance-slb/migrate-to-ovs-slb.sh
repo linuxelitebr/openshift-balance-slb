@@ -10,6 +10,11 @@
 #   NIC1/NIC2 → ovs-bond (balance-slb) → br-phy → patch (VLAN tag) → br-ex (IP)
 #
 # IMPORTANT: Ensure core user has password set for console recovery!
+#
+# v1.6.0 Changes:
+#   - Use /etc/nmstate/openshift/ path (product-provided interface)
+#   - Remove manual 'applied' flag creation (handled by nmstate-configuration)
+#   - Remove manual br-ex cleanup (handled by nmstate-configuration in recent z-streams)
 #===============================================================================
 
 set -euo pipefail
@@ -17,7 +22,7 @@ set -euo pipefail
 #-------------------------------------------------------------------------------
 # Default Configuration
 #-------------------------------------------------------------------------------
-VERSION="1.5.1"
+VERSION="1.6.0"
 TESTED_OCP_VERSION="4.20.8"
 LOG_FILE="/var/log/ovs-slb-migration.log"
 BACKUP_DIR="/root/backup-migration"
@@ -66,7 +71,7 @@ fatal()   { error "$*"; exit 1; }
 #-------------------------------------------------------------------------------
 show_help() {
     cat << 'HELPEOF'
-OVS Balance-SLB Migration Script v1.5.0
+OVS Balance-SLB Migration Script v1.6.0
 Tested on OpenShift 4.20.8
 
 Usage: migrate-to-ovs-slb.sh [OPTIONS] --ip <NODE_IP>
@@ -449,8 +454,9 @@ create_backup() {
     cp -a /etc/kubernetes/cni/net.d/* "${BACKUP_DIR}/cni/" 2>/dev/null || true
     cp /run/multus/cni/net.d/10-ovn-kubernetes.conf "${BACKUP_DIR}/cni/" 2>/dev/null || true
     
-    # Backup current nmstate if exists
+    # Backup current nmstate if exists (both paths)
     cp -a /etc/nmstate/*.yml "${BACKUP_DIR}/" 2>/dev/null || true
+    cp -a /etc/nmstate/openshift/*.yml "${BACKUP_DIR}/" 2>/dev/null || true
     
     success "Backup created in ${BACKUP_DIR}"
 }
@@ -459,23 +465,25 @@ prepare_environment() {
     info "PHASE 2: Preparing environment..."
     
     if $DRY_RUN; then
-        info "[DRY-RUN] Would remove NM connections and create applied flag"
+        info "[DRY-RUN] Would remove NM connections and create nmstate directory"
         return
     fi
     
     # Remove NetworkManager connections
     rm -f /etc/NetworkManager/system-connections/*
     
-    # Create flag to prevent configure-ovs.sh from running
+    # Create openshift nmstate directory
+    # Using /etc/nmstate/openshift/ is the product-provided interface
+    # The nmstate-configuration service will handle the 'applied' flag automatically
     mkdir -p /etc/nmstate/openshift
-    touch /etc/nmstate/openshift/applied
     
     success "Environment prepared"
 }
 
 create_nmstate_config() {
     local hostname=$(hostname -s)
-    local nmstate_file="/etc/nmstate/${hostname}.yml"
+    # Use the product-provided path: /etc/nmstate/openshift/
+    local nmstate_file="/etc/nmstate/openshift/${hostname}.yml"
     
     info "PHASE 3: Creating nmstate configuration..."
     info "Hostname: ${hostname}"
@@ -589,38 +597,37 @@ routes:
         return
     fi
     
+    mkdir -p /etc/nmstate/openshift
     echo "$config" > "$nmstate_file"
     success "nmstate configuration created: ${nmstate_file}"
 }
 
 apply_network_config() {
     local hostname=$(hostname -s)
-    local nmstate_file="/etc/nmstate/${hostname}.yml"
+    local nmstate_file="/etc/nmstate/openshift/${hostname}.yml"
     
-    info "PHASE 4: Removing existing OVS bridges..."
+    info "PHASE 4: Applying nmstate configuration..."
     
     if $DRY_RUN; then
-        info "[DRY-RUN] Would remove existing OVS bridges and apply nmstate"
+        info "[DRY-RUN] Would apply nmstate configuration"
         return
     fi
     
-    # Remove existing bridges to avoid conflicts
-    ovs-vsctl del-br br-ex 2>/dev/null || true
-    ovs-vsctl del-br br-phy 2>/dev/null || true
+    # NOTE: No need to manually delete br-ex/br-phy
+    # The nmstate-configuration service handles cleanup in recent z-streams
+    # when using the /etc/nmstate/openshift/ path
     
-    info "PHASE 5: Applying nmstate configuration..."
     warn ">>> NETWORK WILL BE RECONFIGURED - Have console access ready! <<<"
     
     sleep 2
     
-    cd /etc/nmstate
     nmstatectl apply "$nmstate_file"
     
     success "nmstate configuration applied"
 }
 
 verify_connectivity() {
-    info "PHASE 6: Verifying connectivity..."
+    info "PHASE 5: Verifying connectivity..."
     
     if $DRY_RUN; then
         info "[DRY-RUN] Would verify connectivity to ${GATEWAY}"
@@ -635,13 +642,13 @@ verify_connectivity() {
     else
         error "Cannot reach gateway ${GATEWAY}!"
         error "Use console access to troubleshoot."
-        error "Rollback: rm /etc/nmstate/openshift/applied && reboot"
+        error "Rollback: rm /etc/nmstate/openshift/$(hostname -s).yml && reboot"
         exit 1
     fi
 }
 
 verify_mtu() {
-    info "PHASE 6.1: Verifying MTU configuration..."
+    info "PHASE 5.1: Verifying MTU configuration..."
     
     if $DRY_RUN; then
         info "[DRY-RUN] Would verify MTU is ${MTU} on all interfaces"
@@ -705,7 +712,7 @@ verify_mtu() {
 }
 
 restore_cni() {
-    info "PHASE 7: Ensuring CNI configuration..."
+    info "PHASE 6: Ensuring CNI configuration..."
     
     if $DRY_RUN; then
         info "[DRY-RUN] Would ensure CNI files exist"
@@ -740,7 +747,7 @@ restore_cni() {
 }
 
 restart_services() {
-    info "PHASE 8: Restarting container runtime and kubelet..."
+    info "PHASE 7: Restarting container runtime and kubelet..."
     
     if $DRY_RUN; then
         info "[DRY-RUN] Would restart crio and kubelet"
@@ -761,7 +768,7 @@ restart_services() {
 }
 
 show_validation() {
-    info "PHASE 9: Validation summary..."
+    info "PHASE 8: Validation summary..."
     
     if $DRY_RUN; then
         info "[DRY-RUN] Would show validation output"
@@ -809,8 +816,7 @@ show_completion() {
         echo "  4. Uncordon the node:         oc adm uncordon <node-name>"
         echo ""
         echo "Rollback (if needed):"
-        echo "  rm -f /etc/nmstate/openshift/applied"
-        echo "  rm -f /etc/nmstate/\$(hostname -s).yml"
+        echo "  rm -f /etc/nmstate/openshift/\$(hostname -s).yml"
         echo "  cp ${BACKUP_DIR}/*.nmconnection /etc/NetworkManager/system-connections/"
         echo "  reboot"
     fi
@@ -1185,7 +1191,7 @@ main() {
     apply_network_config
     
     # Skip connectivity test - it requires reboot to work properly
-    info "PHASE 6: Skipping connectivity test (requires reboot)..."
+    info "PHASE 5: Skipping connectivity test (requires reboot)..."
     info "Network configuration has been applied."
     
     restore_cni

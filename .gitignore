@@ -208,3 +208,5 @@ __marimo__/
 openshift-balance-slb.code-workspace
 .DS_Store
 .gitignore
+
+*.bkp

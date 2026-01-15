@@ -4,10 +4,10 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 2.1 |
+| Version | 2.2 |
 | Tested On | OpenShift 4.20.8 (Hosted Control Planes) |
 | Last Updated | January 2026 |
-| Script Version | migrate-to-ovs-slb.sh v1.5.0 |
+| Script Version | migrate-to-ovs-slb.sh v1.6.0 |
 
 ---
 
@@ -63,9 +63,20 @@ OVS balance-slb (Source Load Balancing) uses a hash of the **source MAC address*
 - Traffic from different VMs (different source MACs) is distributed across bond members
 - Traffic from the same VM uses a consistent link (preserving frame ordering)
 - No switch-side configuration is required since each link operates independently
-- Rebalancing occurs periodically based on observed traffic load
+- Rebalancing occurs periodically based on observed traffic load (default: every 10 seconds)
 
 This is particularly beneficial for OpenShift Virtualization workloads where multiple VMs generate traffic with distinct MAC addresses.
+
+#### Technical Note: Failover vs Rebalancing
+
+It's important to distinguish between two different timing aspects:
+
+| Aspect | Time | Description |
+|--------|------|-------------|
+| **Failover** | < 100ms | When a link fails, OVS detects via carrier signal and immediately redirects traffic |
+| **Rebalancing** | 10s (default) | Periodic interval when OVS checks utilization and redistributes MACs across links |
+
+The `bond-rebalance-interval` parameter controls only the rebalancing behavior, not failover speed. Link failure detection remains fast regardless of this setting.
 
 ---
 
@@ -315,29 +326,26 @@ If `br-ex` has the default MTU of 1500, the calculated overlay MTU (1458) is ins
       prefix-length: 24
 ```
 
-### 5.2 NMState File Naming Convention
+### 5.2 NMState File Path (Product-Provided Interface)
 
-**Problem**: Network configuration not applied after reboot, or `configure-ovs.sh` overwrites custom configuration.
+**Important**: OpenShift provides a specific path for nmstate configurations that integrates with the `nmstate-configuration` service.
 
-**Root Cause**: OpenShift's `configure-ovs.sh` script (part of the node initialization) looks for nmstate files with a specific naming pattern:
+**Correct Path**: `/etc/nmstate/openshift/$(hostname -s).yml`
 
-```bash
-# From configure-ovs.sh
-NMSTATE_FILE="/etc/nmstate/$(hostname -s).yml"
-```
+When using this path:
+- The `nmstate-configuration` service automatically detects the file
+- The `applied` flag is managed automatically (no manual creation needed)
+- Bridge cleanup (br-ex) is handled automatically in recent z-streams
+- The `configure-ovs.sh` script respects this configuration
 
-If the file is named generically (e.g., `node.yml`), the script won't find it and may apply default configuration.
+**Incorrect Path**: `/etc/nmstate/$(hostname -s).yml`
 
-**Solution**: Always name the nmstate file using the node's short hostname:
+Using the root `/etc/nmstate/` path requires manual workarounds:
+- Manual creation of `/etc/nmstate/openshift/applied` flag
+- Manual deletion of existing br-ex bridge
+- Risk of `configure-ovs.sh` overwriting configuration
 
-```bash
-# Correct - matches what configure-ovs.sh expects
-/etc/nmstate/ocp-worker-01.yml
-
-# Incorrect - will be ignored
-/etc/nmstate/node.yml
-/etc/nmstate/config.yml
-```
+**Best Practice**: Always use the product-provided interface at `/etc/nmstate/openshift/`.
 
 ### 5.3 CNI Configuration Files
 
@@ -370,46 +378,18 @@ flowchart LR
 - If `00-multus.conf` is missing, pods cannot be scheduled (CNI not ready)
 - If `10-ovn-kubernetes.conf` is missing, check `ovnkube-node` pod status
 
-### 5.4 Applied Flag File Purpose
+### 5.4 Automatic Bridge Cleanup (Recent Z-Streams)
 
-**Purpose**: The file `/etc/nmstate/openshift/applied` signals to `configure-ovs.sh` that network configuration has already been applied and should not be overwritten.
+**Background**: In older OpenShift versions, existing OVS bridges had to be manually deleted before applying new nmstate configuration.
 
-**Technical Background**: During node boot, the `configure-ovs.sh` script runs to ensure OVS networking is configured. Without the flag file, this script may:
-- Detect "missing" configuration
-- Apply default OVS setup
-- Overwrite custom nmstate configuration
+**Current Behavior** (recent z-streams): When using the product-provided path (`/etc/nmstate/openshift/`), the `nmstate-configuration` service automatically handles:
+- Detection of existing br-ex bridge
+- Cleanup of conflicting configurations
+- Application of the new nmstate file
 
-**Implementation**:
-```bash
-mkdir -p /etc/nmstate/openshift
-touch /etc/nmstate/openshift/applied
-```
+**Note**: The migration script (v1.6.0+) no longer includes manual bridge deletion steps, relying on this automatic cleanup.
 
-This must be created **before** applying the nmstate configuration to prevent race conditions on reboot.
-
-### 5.5 Existing Bridge Conflicts
-
-**Problem**: `nmstatectl apply` fails with errors like:
-```
-NmstateVerificationError: Verification failed for bridge br-ex
-```
-
-**Root Cause**: nmstate cannot modify certain properties of existing OVS bridges. If `br-ex` already exists with different port configurations, the apply will fail.
-
-**Solution**: Delete existing OVS bridges before applying new configuration:
-
-```bash
-# Remove existing bridges (ignore errors if they don't exist)
-ovs-vsctl del-br br-ex 2>/dev/null || true
-ovs-vsctl del-br br-phy 2>/dev/null || true
-
-# Now apply nmstate
-nmstatectl apply $(hostname -s).yml
-```
-
-**Note**: This causes a brief network outage, which is why console access is mandatory.
-
-### 5.6 Reboot Required for Stable Operation
+### 5.5 Reboot Required for Stable Operation
 
 **Discovery**: While `nmstatectl apply` configures the network immediately, a full reboot is required for:
 
@@ -545,7 +525,7 @@ sudo /tmp/migrate-to-ovs-slb.sh \
 
 #### Step 7: Uncordon the Node
 
-> **IMPORTANT**: If you are reconfiguring a cluster that uses `br-vmdata`, make sure to adjust the node’s NNCP before uncordoning to avoid VM downtime.
+> **IMPORTANT**: If you are reconfiguring a cluster that uses `br-vmdata`, make sure to adjust the node's NNCP before uncordoning to avoid VM downtime.
 
 ```bash
 # From bastion, after validation passes
@@ -589,22 +569,21 @@ ls -la /root/backup-migration/cni/
 # Clear NetworkManager connection profiles (prevents conflicts)
 rm -f /etc/NetworkManager/system-connections/*
 
-# Create applied flag BEFORE applying nmstate
+# Create the openshift nmstate directory
+# Using /etc/nmstate/openshift/ is the product-provided interface
 mkdir -p /etc/nmstate/openshift
-touch /etc/nmstate/openshift/applied
-
-# Ensure nmstate directory exists
-mkdir -p /etc/nmstate
 ```
+
+> **Note**: When using the `/etc/nmstate/openshift/` path, you do NOT need to manually create the `applied` flag file. The `nmstate-configuration` service handles this automatically.
 
 #### Phase 3: Create NMState Configuration
 
 ```bash
 # Get hostname for correct file naming
 HOSTNAME=$(hostname -s)
-echo "Creating /etc/nmstate/${HOSTNAME}.yml"
+echo "Creating /etc/nmstate/openshift/${HOSTNAME}.yml"
 
-cat > /etc/nmstate/${HOSTNAME}.yml << 'EOF'
+cat > /etc/nmstate/openshift/${HOSTNAME}.yml << 'EOF'
 interfaces:
   # br-ex bridge definition
   - name: br-ex
@@ -718,12 +697,10 @@ EOF
 #### Phase 4: Apply Configuration
 
 ```bash
-# Remove existing OVS bridges to prevent conflicts
-ovs-vsctl del-br br-ex 2>/dev/null || true
-ovs-vsctl del-br br-phy 2>/dev/null || true
-
 # Apply nmstate configuration
-cd /etc/nmstate
+# NOTE: In recent z-streams, bridge cleanup is handled automatically
+# when using the /etc/nmstate/openshift/ path
+cd /etc/nmstate/openshift
 nmstatectl apply ${HOSTNAME}.yml
 
 # Note: Network connectivity may be briefly interrupted here
@@ -982,11 +959,11 @@ ip link set br-ex mtu 9000
 systemctl restart kubelet
 
 # Permanent fix
-vi /etc/nmstate/$(hostname -s).yml
+vi /etc/nmstate/openshift/$(hostname -s).yml
 # Ensure the br-ex ovs-interface section has: mtu: 9000
 
 # Reapply and reboot
-nmstatectl apply /etc/nmstate/$(hostname -s).yml
+nmstatectl apply /etc/nmstate/openshift/$(hostname -s).yml
 reboot
 ```
 
@@ -1045,7 +1022,7 @@ ip route
 **Solution:**
 ```bash
 # Try reapplying nmstate
-cd /etc/nmstate
+cd /etc/nmstate/openshift
 nmstatectl apply $(hostname -s).yml
 
 # If that fails, rollback (see Section 11)
@@ -1152,23 +1129,20 @@ Use proper console access:
 ```bash
 sudo -i
 
-# Step 1: Remove the applied flag (allows configure-ovs.sh to run on next boot)
-rm -f /etc/nmstate/openshift/applied
+# Step 1: Remove custom nmstate configuration
+rm -f /etc/nmstate/openshift/$(hostname -s).yml
 
-# Step 2: Remove custom nmstate configuration
-rm -f /etc/nmstate/$(hostname -s).yml
-
-# Step 3: Remove OVS bridges created by our configuration
+# Step 2: Remove OVS bridges created by our configuration
 ovs-vsctl del-br br-phy 2>/dev/null || true
 ovs-vsctl del-br br-ex 2>/dev/null || true
 
-# Step 4: Restore original NetworkManager connections
+# Step 3: Restore original NetworkManager connections
 cp -a /root/backup-migration/*.nmconnection /etc/NetworkManager/system-connections/ 2>/dev/null || true
 
-# Step 5: Restore CNI configuration
+# Step 4: Restore CNI configuration
 cp -a /root/backup-migration/cni/* /etc/kubernetes/cni/net.d/
 
-# Step 6: Reboot to apply original configuration
+# Step 5: Reboot to apply original configuration
 reboot
 ```
 
@@ -1247,8 +1221,7 @@ oc get nodes -o wide
 
 | File | Purpose |
 |------|---------|
-| `/etc/nmstate/<hostname>.yml` | NMState network configuration |
-| `/etc/nmstate/openshift/applied` | Flag to prevent configure-ovs.sh override |
+| `/etc/nmstate/openshift/<hostname>.yml` | NMState network configuration (product-provided path) |
 | `/etc/kubernetes/cni/net.d/00-multus.conf` | Multus CNI configuration (persistent) |
 | `/run/multus/cni/net.d/10-ovn-kubernetes.conf` | OVN CNI configuration (generated by ovnkube-node) |
 | `/root/backup-migration/` | Backup directory for rollback |
@@ -1260,7 +1233,7 @@ oc get nodes -o wide
 
 | Script | Version | Purpose | Run From |
 |--------|---------|---------|----------|
-| `migrate-to-ovs-slb.sh` | v1.5.0 | Main migration script | Node console |
+| `migrate-to-ovs-slb.sh` | v1.6.0 | Main migration script | Node console |
 | `check-cluster-bond.sh` | v1.0.0 | Cluster-wide validation | Bastion |
 
 ---
@@ -1270,8 +1243,10 @@ oc get nodes -o wide
 ### Complete Annotated Example
 
 ```yaml
-# /etc/nmstate/<hostname>.yml
+# /etc/nmstate/openshift/<hostname>.yml
 # OVS Balance-SLB configuration for OpenShift HCP nodes
+# NOTE: Use /etc/nmstate/openshift/ path for automatic integration
+#       with the nmstate-configuration service
 
 interfaces:
   #---------------------------------------------------------------------------
@@ -1396,11 +1371,79 @@ routes:
 
 ---
 
-## To do
+## Appendix E: Bond Tuning (Optional)
 
-- Rebalance tuning parameters
-  - Default 10s
-    - Change to 30s
+### Rebalance Interval
+
+OVS balance-slb periodically redistributes traffic across bond members based on utilization. The default interval is 10 seconds.
+
+| Interval | Use Case |
+|----------|----------|
+| **10s** (default) | Dynamic environments, frequent VM creation/deletion |
+| **30s** (tuned) | Stable VMs, large environments, bursty traffic patterns |
+
+> **Note**: This setting affects only periodic rebalancing, not failover speed. Link failure detection remains under 100ms regardless of this parameter.
+
+### Configuring via HCP ConfigMap
+
+For HCP clusters, use a ConfigMap with MachineConfig to inject a systemd unit:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ovs-bond-tuning
+  namespace: <hosted-cluster-namespace>
+data:
+  config: |
+    apiVersion: machineconfiguration.openshift.io/v1
+    kind: MachineConfig
+    metadata:
+      labels:
+        machineconfiguration.openshift.io/role: worker
+      name: 99-ovs-bond-tuning
+    spec:
+      config:
+        ignition:
+          version: 3.2.0
+        systemd:
+          units:
+          - name: ovs-bond-tuning.service
+            enabled: true
+            contents: |
+              [Unit]
+              Description=OVS Bond Rebalance Interval Tuning
+              After=openvswitch.service ovs-vswitchd.service
+              Requires=openvswitch.service
+
+              [Service]
+              Type=oneshot
+              ExecStartPre=/usr/bin/sleep 5
+              ExecStart=/usr/bin/ovs-vsctl set port ovs-bond other_config:bond-rebalance-interval=30000
+              RemainAfterExit=yes
+
+              [Install]
+              WantedBy=multi-user.target
+```
+
+Reference the ConfigMap in the NodePool:
+
+```yaml
+spec:
+  config:
+  - name: ovs-bond-tuning
+```
+
+### Verification
+
+```bash
+ovs-vsctl get port ovs-bond other_config
+# Expected: {bond-rebalance-interval="30000"}
+```
+
+### Known Limitation
+
+The `bond-rebalance-interval` parameter cannot be configured via nmstate/NNCP. The nmstate schema does not expose this OVS-specific setting. The ConfigMap/MachineConfig approach is the supported method for HCP environments.
 
 ---
 
