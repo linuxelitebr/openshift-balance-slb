@@ -400,7 +400,7 @@ done
 | NNCE doesn't appear after label | Slow operator | `oc get nnce -w`, wait |
 | br-vmdata keeps coming back | NNCP conflict | Verify original NNCP has `balance-slb-migrated: "false"` selector |
 | VM has no network | Incorrect bridge-mapping | Verify `ovn-bridge-mappings` |
-| Node NotReady after reboot | Incorrect MTU | Verify MTU 9000 on br-ex |
+| Node NotReady after reboot | Incorrect MTU, Incorrect VLAN, incorrect GW, etc. | Verify MTU 9000 on br-ex, etc |
 
 ### Useful Logs
 
