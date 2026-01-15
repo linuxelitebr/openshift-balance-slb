@@ -151,7 +151,7 @@ cd /tmp
 # Option: curl, scp before cordon, or copy manually
 
 # Execute migration
-./migrate-to-ovs-slb.sh --ip $NODE_IP --nic1 <NIC1> --nic2 <NIC2> --gateway <GW> --prefix <PREFIX>
+./migrate-to-ovs-slb.sh --ip $NODE_IP --nic1 <NIC1> --nic2 <NIC2> --gateway <GW> --prefix <PREFIX> --vlan <VLAN>
 
 # Real example:
 ./migrate-to-ovs-slb.sh \
