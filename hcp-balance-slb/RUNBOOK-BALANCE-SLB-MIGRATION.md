@@ -122,6 +122,7 @@ oc adm cordon $NODE
 # Check VMs on node
 oc get vmi -A -o wide | grep $NODE
 
+
 ## You have two options here: ##
 
 # Drain the node
@@ -152,7 +153,15 @@ cd /tmp
 # Option: curl, scp before cordon, or copy manually
 
 # Execute migration
-./migrate-to-ovs-slb.sh --ip $NODE_IP --nic1 <NIC1> --nic2 <NIC2> --gateway <GW> --prefix <PREFIX> --vlan <VLAN>
+./migrate-to-ovs-slb.sh \
+--ip $NODE_IP \
+--prefix <PREFIX> \
+--gateway <GW> \
+--dns1 <DNS1> \
+--dns2 <DNS2> \
+--nic1 <NIC1> \
+--nic2 <NIC2> \
+--vlan <VLAN>
 
 # Real example:
 ./migrate-to-ovs-slb.sh \
