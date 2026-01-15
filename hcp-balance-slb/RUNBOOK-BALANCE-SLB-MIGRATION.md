@@ -356,6 +356,8 @@ spec:
 
 The NodePool will trigger a rolling update of worker nodes:
 
+> The nodes will reboot.
+
 ```bash
 # Watch node updates
 oc get nodes -w
