@@ -3,7 +3,7 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.1 |
+| Version | 1.2 |
 | Tested on | OpenShift 4.20.8 |
 | Estimated time | 30-45 min per node |
 
