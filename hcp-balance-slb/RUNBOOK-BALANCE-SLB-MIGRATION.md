@@ -192,7 +192,7 @@ oc debug node/$NODE -- chroot /host ovs-vsctl list-br
 
 # Check bridge-mapping
 oc debug node/$NODE -- chroot /host ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
-# Expected: "vmnet:br-phy"
+# Expected: "vmnet:br-phy,physnet:br-ex"
 
 # Check bond
 oc debug node/$NODE -- chroot /host ovs-appctl bond/show ovs-bond
