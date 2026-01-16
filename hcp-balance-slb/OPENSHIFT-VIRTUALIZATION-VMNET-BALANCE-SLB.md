@@ -5,10 +5,11 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.4 |
+| Version | 1.5 |
 | Tested On | OpenShift 4.20.8 (HCP Agent Nodes) |
 | Last Updated | January 2026 |
 | Prerequisites | OVS Balance-SLB migration completed |
+| Script Version | migrate-to-ovs-slb.sh v1.6.0 |
 
 ---
 
@@ -472,26 +473,26 @@ When br-vmdata is managed by NNCP:
 - The original NNCP continues to apply to all matching nodes
 - You need a controlled, per-node migration strategy
 
-#### Solution: matchExpressions with Hostname Selector
+#### Solution: Label-Based Migration with NNCP
 
-Use `matchExpressions` with `kubernetes.io/hostname` to control which nodes receive the migration configuration. This approach is elegant because:
+Use a dedicated label (`balance-slb-migrated: 'true'`) to control which nodes receive the migration configuration. This approach provides:
 
-- **Single NNCP** manages the entire migration
-- **Granular control** - add one hostname at a time
-- **Visual history** - the NNCP shows which nodes are migrated
-- **No prerequisites** - no need to configure labels beforehand
+- **Granular control** - migrate one node at a time
+- **Visual tracking** - labels show which nodes are migrated
+- **Safe rollback** - remove label to revert
+- **Future-proof** - switch to generic selector when done
 
 ```mermaid
 flowchart TB
     subgraph Phase1["Phase 1: Controlled Migration"]
-        P1["matchExpressions:<br/>hostname In [worker-01]"]
-        P1 --> P2["Add worker-02"]
-        P2 --> P3["Add worker-03"]
-        P3 --> P4["..."]
+        P1["Create NNCP with label selector"]
+        P1 --> P2["Label worker-01"]
+        P2 --> P3["Label worker-02"]
+        P3 --> P4["Label worker-03"]
     end
     
     subgraph Phase2["Phase 2: Finalization"]
-        F1["nodeSelector:<br/>node-role.kubernetes.io/worker: ''"]
+        F1["Change selector to:<br/>node-role.kubernetes.io/worker: ''"]
         F2["New workers auto-configured"]
     end
     
@@ -500,10 +501,9 @@ flowchart TB
 
 #### Step 1: Create Migration NNCP
 
-Create a new NNCP that targets specific nodes by label:
+Create a new NNCP that targets nodes by label:
 
 ```yaml
-cat <<EOF | oc apply -f -
 apiVersion: nmstate.io/v1
 kind: NodeNetworkConfigurationPolicy
 metadata:
@@ -521,7 +521,6 @@ spec:
       - bridge: br-phy
         localnet: vmnet
         state: present
-EOF
 ```
 
 Apply the NNCP:
@@ -551,9 +550,12 @@ watch -d oc get vmi -A
 #    ./migrate-to-ovs-slb.sh --ip <NODE_IP>
 #    reboot
 
-# 4. After reboot, add node label to node
-oc label node ocp-dualstack-10.baremetalbr.com balance-slb-migrated=true
-# This will apply the NNCP configuration to the node, disabling the OVS Bridge br-vmdata, and enabling an OVN bridge-mapping for bridge br-phy.
+# 4. After reboot, add the migration label to the node
+oc label node <node-name> balance-slb-migrated=true
+
+# This triggers the NNCP to:
+#   - Remove br-vmdata bridge
+#   - Configure bridge-mapping vmnet:br-phy
 
 # 5. Wait for NNCE to apply
 oc get nnce -w | grep br-vmdata-migrated
@@ -576,13 +578,17 @@ virtctl console <vm-name>
 
 #### Step 3: Progress Tracking
 
-Keep track of the nodes that have been labeled for reconfiguration with balance-slb. Gradually reintroduce VMs to them.
-
-Check progress:
+Track migration progress by checking labeled nodes:
 
 ```bash
+# Check which nodes have been migrated
+oc get nodes -l balance-slb-migrated=true
+
 # Check NNCE status for all targeted nodes
 oc get nnce | grep br-vmdata-migrated
+
+# Check which nodes still need migration
+oc get nodes -l '!balance-slb-migrated'
 ```
 
 #### Step 4: Finalize - Switch to Generic Selector
@@ -643,29 +649,41 @@ oc get nnce | grep br-vmdata
 oc delete nncp br-vmdata
 ```
 
+#### Step 6: Optional - Clean Up Migration Labels
+
+After finalizing with the generic selector, you can optionally remove the migration labels:
+
+```bash
+# Remove labels from all nodes (optional cleanup)
+for node in $(oc get nodes -l balance-slb-migrated=true -o name); do
+  oc label $node balance-slb-migrated-
+done
+```
+
 #### NNCP Migration Checklist
 
 | Step | Action | Verification |
 |------|--------|--------------|
-| 1 | Create migration NNCP with first hostname | `oc get nncp br-vmdata-migrated` |
+| 1 | Create migration NNCP with label selector | `oc get nncp br-vmdata-migrated` |
 | 2 | Cordon node | Node shows SchedulingDisabled |
 | 3 | Run balance-slb migration (console) | Script completes, node reboots |
-| 4 | Add hostname to NNCP values | `oc edit nncp br-vmdata-migrated` |
+| 4 | Add label to node | `oc label node <n> balance-slb-migrated=true` |
 | 5 | Wait for NNCE | `oc get nnce` shows Available |
 | 6 | Verify br-vmdata removed | `ovs-vsctl list-br` shows no br-vmdata |
 | 7 | Verify bridge-mapping | Shows `vmnet:br-phy` |
 | 8 | Uncordon and test | VMs have connectivity |
-| 9 | Repeat for each node | Add hostname to values |
+| 9 | Repeat for each node | Add label to each |
 | 10 | Finalize: change to worker selector | `oc edit nncp` |
 | 11 | Delete original NNCP | `oc delete nncp br-vmdata` |
+| 12 | Optional: clean up labels | Remove `balance-slb-migrated` labels |
 
 ---
 
 ## 5. Configuration Procedure
 
-If you are setting up a **new cluster that has never had** `br-vmdata` configured, you can configure the ovn bridge-mappings directly, without the need to use an NNCP.
+If you are setting up a **new cluster that has never had** `br-vmdata` configured, you can configure the ovn bridge-mappings directly via nmstate or NNCP.
 
-### 5.1 Add Bridge-Mapping to nmstate
+### 5.1 Option A: Add Bridge-Mapping to nmstate (Per Node)
 
 The bridge-mapping tells OVN which OVS bridge to use for localnet traffic.
 
@@ -676,7 +694,7 @@ The bridge-mapping tells OVN which OVS bridge to use for localnet traffic.
 ssh core@<node-ip>
 sudo -i
 
-# Edit the nmstate file
+# Edit the nmstate file (use product-provided path)
 vi /etc/nmstate/openshift/$(hostname -s).yml
 ```
 
@@ -724,11 +742,11 @@ ovn:
       state: present
 ```
 
-### 5.2 Apply Configuration
+#### Apply Configuration
 
 ```bash
 # Apply the updated nmstate
-cd /etc/nmstate
+cd /etc/nmstate/openshift
 nmstatectl apply $(hostname -s).yml
 
 # Verify bridge-mapping was applied
@@ -740,9 +758,36 @@ ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
 "vmnet:br-phy"
 ```
 
-### 5.3 Repeat for All Nodes
+### 5.2 Option B: Use NNCP for All Nodes (Recommended)
 
-Apply the same bridge-mapping configuration to all worker nodes that will host VMs.
+For cluster-wide configuration, use a NodeNetworkConfigurationPolicy:
+
+```yaml
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: vmnet-bridge-mapping
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ''
+  desiredState:
+    ovn:
+      bridge-mappings:
+      - bridge: br-phy
+        localnet: vmnet
+        state: present
+```
+
+Apply:
+
+```bash
+oc apply -f vmnet-bridge-mapping-nncp.yaml
+
+# Watch for completion
+oc get nnce -w
+```
+
+### 5.3 Verify All Nodes
 
 ```bash
 # Quick verification script (run from bastion)
@@ -1040,13 +1085,22 @@ oc debug node/<node-name> -- chroot /host ovs-vsctl list-br
 
 **Symptom:** `ovs-vsctl list-br` still shows br-vmdata
 
-**Solution:**
+**If br-vmdata was created manually:**
 ```bash
 # Remove orphaned bridge
 ovs-vsctl del-br br-vmdata
 
 # Verify
 ovs-vsctl list-br
+```
+
+**If br-vmdata was created via NNCP:**
+```bash
+# Check if NNCP is still applying
+oc get nnce | grep br-vmdata
+
+# You must use the label-based migration approach (Section 4.7)
+# Manual deletion will be reverted by the operator
 ```
 
 ### 9.2 Bridge-Mapping Shows Old br-vmdata
@@ -1169,14 +1223,35 @@ ip link show eth1 | grep mtu       # Should be 9000
 # On switch - ensure jumbo frames enabled
 ```
 
+### 9.8 NNCE Stuck in Progressing State
+
+**Symptom:** `oc get nnce` shows NNCE for node stuck in Progressing
+
+**Diagnosis:**
+```bash
+# Check NNCE details
+oc describe nnce <nnce-name>
+
+# Check nmstate logs on node
+oc debug node/<node-name> -- chroot /host journalctl -u nmstate
+
+# Check if node has connectivity issues
+oc debug node/<node-name> -- chroot /host ping -c 3 <gateway>
+```
+
+**Common Causes:**
+1. Node network configuration conflict
+2. nmstate service issues
+3. Invalid NNCP configuration
+
 ---
 
 ## Appendix A: Quick Reference
 
-### Remove br-vmdata and Configure br-phy
+### Remove br-vmdata and Configure br-phy (Manual Method)
 
 ```bash
-# Remove orphaned bridge
+# Remove orphaned bridge (only if not NNCP-managed)
 ovs-vsctl del-br br-vmdata
 
 # Add bridge-mapping to nmstate
@@ -1200,6 +1275,44 @@ ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
 ovs-vsctl set Open_vSwitch . external_ids:ovn-bridge-mappings="vmnet:br-phy,physnet:br-ex"
 ```
 
+### Label-Based Migration (NNCP Method)
+
+```bash
+# 1. Create migration NNCP (once)
+cat <<EOF | oc apply -f -
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: br-vmdata-migrated
+spec:
+  nodeSelector:
+    balance-slb-migrated: 'true'
+  desiredState:
+    interfaces:
+    - name: br-vmdata
+      type: ovs-bridge
+      state: absent
+    ovn:
+      bridge-mappings:
+      - bridge: br-phy
+        localnet: vmnet
+        state: present
+EOF
+
+# 2. Per node: after balance-slb migration + reboot
+oc label node <node-name> balance-slb-migrated=true
+
+# 3. Wait and verify
+oc get nnce | grep br-vmdata-migrated
+oc debug node/<node-name> -- chroot /host ovs-vsctl list-br
+
+# 4. After all nodes: switch to generic selector
+oc patch nncp br-vmdata-migrated --type=merge -p '
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+'
+```
 
 ### Create NAD
 
@@ -1281,8 +1394,8 @@ flowchart TB
     end
     
     subgraph Phase2["Phase 2: VM Network Migration"]
-        P2A["Remove br-vmdata"] --> P2B["Add bridge-mapping<br/>vmnet:br-phy"]
-        P2B --> P2C["Apply nmstate"]
+        P2A["Add label OR remove br-vmdata"] --> P2B["NNCP applies OR manual config"]
+        P2B --> P2C["Bridge-mapping: vmnet:br-phy"]
     end
     
     subgraph Phase3["Phase 3: Validation"]
@@ -1297,6 +1410,18 @@ flowchart TB
     style Phase2 fill:#e0e0e0,stroke:#666
     style Phase3 fill:#d0d0d0,stroke:#666
 ```
+
+---
+
+## Appendix D: Files Reference
+
+| File | Purpose |
+|------|---------|
+| `/etc/nmstate/openshift/<hostname>.yml` | NMState network configuration (product-provided path) |
+| `/etc/kubernetes/cni/net.d/00-multus.conf` | Multus CNI configuration (persistent) |
+| `/run/multus/cni/net.d/10-ovn-kubernetes.conf` | OVN CNI configuration (generated by ovnkube-node) |
+| `/root/backup-migration/` | Backup directory for rollback |
+| `/var/log/ovs-slb-migration.log` | Migration script log file |
 
 ---
 
