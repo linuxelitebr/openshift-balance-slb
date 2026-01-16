@@ -1452,5 +1452,162 @@ The `bond-rebalance-interval` parameter cannot be configured via nmstate/NNCP. T
 
 ---
 
+## Appendix F: Upgrading HCP Clusters After Balance-SLB Migration
+
+### Tested Scenario
+
+| Field | Value |
+|-------|-------|
+| Upgrade Path | OpenShift 4.19.20 → 4.20.10 |
+| Configuration | OVS balance-slb with dual-bridge topology |
+| Test Date | January 2026 |
+| Result | **Successful** |
+
+### Allow **admissionregistration** upgrade from 4.19 to 4.20:
+
+```sh
+oc -n openshift-config patch cm admin-acks --patch '{"data":{"ack-4.19-admissionregistration-v1beta1-api-removals-in-4.20":"true"}}' --type=merge
+```
+
+### Key Findings
+
+The OVS balance-slb configuration is **fully preserved** through HCP upgrades:
+
+1. **nmstate configuration persists**: Files in `/etc/nmstate/openshift/` survive node upgrades and reboots
+2. **OVS bridges maintained**: br-ex, br-phy, and ovs-bond remain intact after upgrade
+3. **Bridge-mappings preserved**: OVN bridge-mappings (`vmnet:br-phy`) are not affected
+4. **No manual intervention required**: The upgrade process does not overwrite custom network configuration
+5. **VM connectivity unaffected**: VMs using localnet NADs maintain network access throughout the upgrade
+
+### Why It Works
+
+The balance-slb configuration uses the **product-provided interface** (`/etc/nmstate/openshift/`), which is:
+
+- Respected by the `nmstate-configuration` service during boot
+- Not overwritten by `configure-ovs.sh` during node initialization
+- Independent of the OpenShift version being upgraded to
+
+The upgrade process:
+1. Drains workloads from the node (if configured)
+2. Applies new RHCOS image
+3. Reboots the node
+4. `nmstate-configuration` service applies the existing nmstate file
+5. Node rejoins cluster with balance-slb intact
+
+### Pre-Upgrade Checklist
+
+Before initiating an HCP upgrade on a balance-slb configured cluster:
+
+| # | Check | Command | Expected |
+|---|-------|---------|----------|
+| 1 | All nodes Ready | `oc get nodes` | All nodes `Ready` |
+| 2 | Balance-SLB configured | `./check-cluster-bond.sh` | All nodes show `balance-slb` |
+| 3 | nmstate files exist | `ls /etc/nmstate/openshift/*.yml` | One file per node |
+| 4 | Bridge-mappings set | `ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings` | `"vmnet:br-phy"` |
+| 5 | VMs healthy | `oc get vmi -A` | All VMs `Running` |
+
+### Post-Upgrade Validation
+
+After upgrade completes, verify on each upgraded node:
+
+```bash
+# 1. Verify bond mode
+ovs-appctl bond/show ovs-bond | grep bond_mode
+# Expected: bond_mode: balance-slb
+
+# 2. Verify both members enabled
+ovs-appctl bond/show ovs-bond | grep may_enable
+# Expected: Two lines with "may_enable: true"
+
+# 3. Verify bridge structure
+ovs-vsctl show | grep -E "Bridge|Port"
+# Expected: br-ex, br-phy, patch ports, ovs-bond
+
+# 4. Verify MTU
+ip link show br-ex | grep mtu
+# Expected: mtu 9000
+
+# 5. Verify bridge-mapping (if using VM localnet)
+ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
+# Expected: "vmnet:br-phy"
+
+# 6. Test gateway connectivity
+ping -c 3 <gateway-ip>
+# Expected: 0% packet loss
+```
+
+Or use the migration script validation mode:
+
+```bash
+./migrate-to-ovs-slb.sh --validate --gateway <gateway-ip>
+```
+
+### Cluster-Wide Post-Upgrade Check
+
+```bash
+# Quick verification of all nodes
+./check-cluster-bond.sh
+
+# Expected output:
+# NODE                  BOND MODE       STATUS     MTU      BR-EX IP
+# ocp-worker-01         balance-slb     OK (2)     9000     10.x.x.x
+# ocp-worker-02         balance-slb     OK (2)     9000     10.x.x.x
+# ocp-worker-03         balance-slb     OK (2)     9000     10.x.x.x
+```
+
+### VM Validation After Upgrade
+
+If running OpenShift Virtualization with localnet NADs:
+
+```bash
+# Verify VMs are running
+oc get vmi -A
+
+# Test VM connectivity (from inside VM)
+virtctl console <vm-name>
+# ping <vlan-gateway>
+# ping <other-vm-on-same-vlan>
+```
+
+### Considerations
+
+1. **Staged upgrades recommended**: For large clusters, consider upgrading one NodePool at a time to minimize risk
+
+2. **Monitor during upgrade**: Watch node status during the upgrade process:
+   ```bash
+   watch -d 'oc get nodes; echo "---"; oc get mcp'
+   ```
+
+3. **Rollback path**: If issues occur, the standard HCP rollback procedures apply. The balance-slb configuration does not affect rollback capability
+
+4. **Future upgrades**: This validation applies to minor version upgrades (4.x → 4.y). Major version upgrades should be re-validated
+
+### Tested Upgrade Paths
+
+| From Version | To Version | Date Tested | Result |
+|--------------|------------|-------------|--------|
+| 4.19.20 | 4.20.10 | January 2026 | Success |
+
+> **Note**: This table will be updated as additional upgrade paths are validated.
+
+### Upgrade Screens
+
+![HCP Upgrade 1](images/hcp-balance-slb-upgrade-1.avif "HCP Upgrade Screen 1")
+
+![HCP Upgrade 2](images/hcp-balance-slb-upgrade-2.avif "HCP Upgrade Screen 2")
+
+![HCP Upgrade 3](images/hcp-balance-slb-upgrade-3.avif "HCP Upgrade Screen 3")
+
+![HCP Upgrade 4](images/hcp-balance-slb-upgrade-4.avif "HCP Upgrade Screen 4")
+
+![HCP Upgrade 5](images/hcp-balance-slb-upgrade-5.avif "HCP Upgrade Screen 5")
+
+![HCP Upgrade 6](images/hcp-balance-slb-upgrade-6.avif "HCP Upgrade Screen 6")
+
+![HCP Upgrade 7](images/hcp-balance-slb-upgrade-7.avif "HCP Upgrade Screen 7")
+
+---
+
 *Document maintained by Infrastructure Team*  
-*Last technical review: January 2026*
+*Last technical review: January 2026*  
+*Validated by Infrastructure Team - January 2026*
