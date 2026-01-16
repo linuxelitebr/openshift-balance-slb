@@ -486,6 +486,9 @@ chmod +x migrate-to-ovs-slb.sh
 
 Carefully **review the result**, and then execute it for real (remove the `--dry-run` parameter from the command).
 
+![migrate-to-ovs-slb.sh](images/migrate-to-ovs-slb-1.avif "Balance SLB Setup 1")
+
+![migrate-to-ovs-slb.sh](images/migrate-to-ovs-slb-2.avif "Balance SLB Setup 2")
 
 #### Script Parameters
 
