@@ -5,7 +5,7 @@
 | Field | Value |
 |-------|-------|
 | Version | 2.2 |
-| Tested On | OpenShift 4.20.8 (Hosted Control Planes) |
+| Tested On | OpenShift 4.19.20, 4.20.8 (Hosted Control Planes) |
 | Last Updated | January 2026 |
 | Script Version | migrate-to-ovs-slb.sh v1.6.0 |
 
