@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.2 |
+| Version | 1.3 |
 | Tested on | OpenShift 4.20.8 |
 | Estimated time | 30-45 min per node |
 
@@ -432,6 +432,8 @@ In **Hosted Cluster**, enable version upgrades.
 ```sh
 oc -n openshift-config patch cm admin-acks --patch '{"data":{"ack-4.19-admissionregistration-v1beta1-api-removals-in-4.20":"true"}}' --type=merge
 ```
+
+* Select a **stable** version to avoid having to switch the channel to `fast` after the upgrade.
 
 ### Upgrade Screens
 
