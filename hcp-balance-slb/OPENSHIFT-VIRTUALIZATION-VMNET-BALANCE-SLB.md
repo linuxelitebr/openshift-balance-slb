@@ -52,48 +52,71 @@ This document describes how to configure OpenShift Virtualization VM networking 
 ### Network Topology
 
 ```mermaid
-flowchart TB
+flowchart LR
+    %% =========================
+    %% Physical Switch
+    %% =========================
     subgraph Switch["Physical Switch"]
-        TRUNK["Trunk Port<br/>All VLANs"]
+        TRUNK["Switch Port<br/>(802.1Q trunk<br/>All VLANs)"]
     end
-    
+
+    %% =========================
+    %% OpenShift Node
+    %% =========================
     subgraph Node["OpenShift Node"]
-        subgraph BRPHY["br-phy (OVS Bridge)"]
-            BOND["ovs-bond<br/>(balance-slb)<br/>ens33 + ens34"]
-            PATCH1["patch-phy-to-ex<br/>VLAN 100 access"]
-            VMTRUNK["VM Traffic<br/>(trunk - all VLANs)"]
+
+        %% ---- br-phy ----
+        subgraph BRPHY["br-phy (OVS Bridge - shared)"]
+            BOND["ovs-bond<br/>(balance-slb)"]
+            PATCH1["patch-phy-to-ex<br/>(VLAN 100 access)"]
+            VMTRUNK["VM traffic<br/>(trunk - all VLANs)"]
         end
-        
+
+        %% ---- br-ex ----
         subgraph BREX["br-ex"]
             NODEIP["Node IP<br/>10.x.x.x/24"]
         end
-        
+
+        %% ---- OVN ----
         subgraph OVN["OVN Localnet"]
-            LS1["localnet switch<br/>vlan224"]
-            LS2["localnet switch<br/>vlan300"]
+            LS1["localnet switch<br/>VLAN 224"]
+            LS2["localnet switch<br/>VLAN 300"]
         end
-        
+
+        %% ---- VMs ----
         subgraph VMS["Virtual Machines"]
             VM1["VM 1<br/>VLAN 224"]
             VM2["VM 2<br/>VLAN 300"]
             VM3["VM 3<br/>VLAN 224"]
         end
     end
-    
+
+    %% =========================
+    %% Connections
+    %% =========================
     TRUNK --- BOND
+
     BOND --> PATCH1
     BOND --> VMTRUNK
+
     PATCH1 <--> NODEIP
+
     VMTRUNK --> LS1
     VMTRUNK --> LS2
+
     LS1 --> VM1
     LS1 --> VM3
     LS2 --> VM2
-    
-    style BRPHY fill:#e0e0e0,stroke:#666
-    style BREX fill:#f0f0f0,stroke:#666
-    style BOND fill:#d0d0d0,stroke:#666
-    style VMTRUNK fill:#c0c0c0,stroke:#666
+
+    %% =========================
+    %% Styling (optional)
+    %% =========================
+    style BRPHY fill:#e5e7eb,stroke:#6b7280
+    style BREX fill:#f3f4f6,stroke:#6b7280
+    style OVN fill:#ecfdf5,stroke:#059669
+    style VMS fill:#f0fdf4,stroke:#16a34a
+    style BOND fill:#d1d5db,stroke:#4b5563
+
 ```
 
 ### Traffic Isolation
@@ -102,22 +125,26 @@ Node traffic and VM traffic share the same physical bond but are isolated:
 
 ```mermaid
 flowchart LR
-    subgraph NodeTraffic["Node Traffic Flow"]
-        N1["kubelet/OVN"] --> N2["br-ex"] --> N3["patch-ex-to-phy"]
-        N3 --> N4["patch-phy-to-ex<br/>(VLAN 100 tag added)"]
-        N4 --> N5["ovs-bond"] --> N6["Switch"]
-    end
-    
-    subgraph VMTraffic["VM Traffic Flow"]
-        V1["VM eth0"] --> V2["OVN localnet port"]
-        V2 --> V3["br-phy<br/>(VLAN tag from NAD)"]
-        V3 --> V4["ovs-bond"] --> V5["Switch"]
-    end
-    
-    style NodeTraffic fill:#f5f5f5,stroke:#666
-    style VMTraffic fill:#e8e8e8,stroke:#666
-    style N4 fill:#d0d0d0,stroke:#666
-    style V3 fill:#c0c0c0,stroke:#666
+    N1["kubelet / host traffic"]
+    N2["br-ex"]
+    N3["patch-ex ↔ br-phy<br/>(access VLAN 100)"]
+    N4["ovs-bond"]
+    N5["Switch"]
+
+    N1 --> N2 --> N3 --> N4 --> N5
+```
+
+<br>
+
+```mermaid
+flowchart LR
+    V1["VM eth0"]
+    V2["OVN localnet"]
+    V3["br-phy<br/>(VLAN from NAD)"]
+    V4["ovs-bond"]
+    V5["Switch"]
+
+    V1 --> V2 --> V3 --> V4 --> V5
 ```
 
 **Key Point**: VM traffic does NOT pass through the patch port. It goes directly from br-phy to the bond with the VLAN tag applied by OVN.
@@ -130,10 +157,10 @@ flowchart LR
 
 Before proceeding, ensure:
 
-- [ ] OVS balance-slb migration completed on all nodes
-- [ ] All nodes showing `balance-slb` in `check-cluster-bond.sh`
-- [ ] MetalLB L2Advertisement updated (removed `bond0.100`)
-- [ ] Physical switch ports configured as trunk (all required VLANs allowed)
+- OVS balance-slb migration completed on all nodes
+- All nodes showing `balance-slb` in `check-cluster-bond.sh`
+- MetalLB L2Advertisement updated (removed `bond0.100`)
+- Physical switch ports configured as trunk (all required VLANs allowed)
 
 ### Verify Current Configuration
 
@@ -199,24 +226,27 @@ If your cluster had a dedicated `br-vmdata` bridge using `bond0` as port, the mi
 ```mermaid
 flowchart TB
     subgraph Before["Before Migration"]
-        BOND0["bond0 (Linux LACP)"]
-        BOND0 --> BRVMDATA1["br-vmdata<br/>bridge-mapping: vmnet"]
-        BOND0 --> BREX1["br-ex"]
+        BOND0["bond0<br/>(Linux LACP)"]
+
+        BOND0 --> BRVMDATA1["br-vmdata<br/>VM traffic (bridge-mapping: vmnet)"]
+        BOND0 --> BREX1["br-ex<br/>Node traffic"]
     end
 ```
 
+<br>
+
 ```mermaid
 flowchart TB
-    subgraph After["After Migration (Problem)"]
-        OVSBOND["ovs-bond (balance-slb)"]
-        OVSBOND --> BRPHY["br-phy"]
-        BRPHY --> BREX2["br-ex"]
-        BRVMDATA2["br-vmdata<br/>(ORPHANED!)"]
-        BRVMDATA2 -.- X["bond0 no longer exists"]
+    subgraph After["After Migration (Broken VM Path)"]
+        OVSBOND["ovs-bond<br/>(balance-slb)"]
+        BRPHY["br-phy"]
+        BREX2["br-ex"]
+
+        OVSBOND --> BRPHY --> BREX2
+
+        BRVMDATA2["br-vmdata<br/>(legacy bridge-mapping)"]
+        BRVMDATA2 -.- MISSING["bond0 (removed)"]
     end
-    
-    style BRVMDATA2 fill:#d0d0d0,stroke:#999
-    style X fill:#e0e0e0,stroke:#999
 ```
 
 After migration:
@@ -358,10 +388,10 @@ For manual configuration:
 
 ```bash
 # Verify nmstate file has ovn section
-grep -A5 "^ovn:" /etc/nmstate/$(hostname -s).yml
+grep -A5 "^ovn:" /etc/nmstate/openshift/$(hostname -s).yml
 
 # If missing, add it
-cat >> /etc/nmstate/$(hostname -s).yml << 'EOF'
+cat >> /etc/nmstate/openshift/$(hostname -s).yml << 'EOF'
 
 ovn:
   bridge-mappings:
@@ -371,7 +401,7 @@ ovn:
 EOF
 
 # Apply nmstate
-nmstatectl apply /etc/nmstate/$(hostname -s).yml
+nmstatectl apply /etc/nmstate/openshift/$(hostname -s).yml
 
 # Verify bridge-mapping
 ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
@@ -647,7 +677,7 @@ ssh core@<node-ip>
 sudo -i
 
 # Edit the nmstate file
-vi /etc/nmstate/$(hostname -s).yml
+vi /etc/nmstate/openshift/$(hostname -s).yml
 ```
 
 Add the following section at the end of the file (same indentation level as `interfaces:`, `dns-resolver:`, `routes:`):
@@ -1026,13 +1056,13 @@ ovs-vsctl list-br
 **Solution:**
 ```bash
 # Check nmstate file has correct ovn section
-grep -A5 "^ovn:" /etc/nmstate/$(hostname -s).yml
+grep -A5 "^ovn:" /etc/nmstate/openshift/$(hostname -s).yml
 
 # If incorrect or missing, fix and reapply
-vi /etc/nmstate/$(hostname -s).yml
+vi /etc/nmstate/openshift/$(hostname -s).yml
 # Ensure: bridge: br-phy
 
-nmstatectl apply /etc/nmstate/$(hostname -s).yml
+nmstatectl apply /etc/nmstate/openshift/$(hostname -s).yml
 
 # If nmstate doesn't work, apply manually (temporary)
 ovs-vsctl set Open_vSwitch . external_ids:ovn-bridge-mappings="vmnet:br-phy"
@@ -1045,10 +1075,10 @@ ovs-vsctl set Open_vSwitch . external_ids:ovn-bridge-mappings="vmnet:br-phy"
 **Solution:**
 ```bash
 # Verify nmstate file has ovn section
-cat /etc/nmstate/$(hostname -s).yml | grep -A5 "ovn:"
+cat /etc/nmstate/openshift/$(hostname -s).yml | grep -A5 "ovn:"
 
 # If missing, add it and reapply
-cat >> /etc/nmstate/$(hostname -s).yml << 'EOF'
+cat >> /etc/nmstate/openshift/$(hostname -s).yml << 'EOF'
 
 ovn:
   bridge-mappings:
@@ -1057,7 +1087,7 @@ ovn:
       state: present
 EOF
 
-nmstatectl apply /etc/nmstate/$(hostname -s).yml
+nmstatectl apply /etc/nmstate/openshift/$(hostname -s).yml
 
 # Verify
 ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
@@ -1150,7 +1180,7 @@ ip link show eth1 | grep mtu       # Should be 9000
 ovs-vsctl del-br br-vmdata
 
 # Add bridge-mapping to nmstate
-cat >> /etc/nmstate/$(hostname -s).yml << 'EOF'
+cat >> /etc/nmstate/openshift/$(hostname -s).yml << 'EOF'
 
 ovn:
   bridge-mappings:
@@ -1160,7 +1190,7 @@ ovn:
 EOF
 
 # Apply
-nmstatectl apply /etc/nmstate/$(hostname -s).yml
+nmstatectl apply /etc/nmstate/openshift/$(hostname -s).yml
 
 # Verify
 ovs-vsctl list-br
