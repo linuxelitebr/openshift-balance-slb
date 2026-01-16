@@ -867,6 +867,8 @@ After migrating all nodes, verify the entire cluster from the bastion:
 ./check-cluster-bond.sh --nodes ocp-worker-01,ocp-worker-02
 ```
 
+![check-cluster-bond.sh](images/check-cluster-bond.avif "Check Cluster Bond")
+
 ### Expected Output
 
 ```
