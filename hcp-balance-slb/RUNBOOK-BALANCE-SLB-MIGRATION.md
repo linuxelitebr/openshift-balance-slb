@@ -1,4 +1,5 @@
 # Runbook: OVS Balance-SLB Migration
+
 ## Clusters with br-vmdata via NNCP
 
 | Field | Value |
@@ -414,6 +415,42 @@ oc get nnce $NODE.br-vmdata-migrated -o yaml
 
 ---
 
+## Upgrading HCP Clusters After Balance-SLB Migration
+
+## Tested Upgrade Paths
+
+| From Version | To Version | Date Tested | Result |
+|--------------|------------|-------------|--------|
+| 4.19.20 | 4.20.10 | January 2026 | Success |
+
+> **Note**: This table will be updated as additional upgrade paths are validated.
+
+### Allow admissionregistration upgrade from 4.19 to 4.20:
+
+In **Hosted Cluster**, enable version upgrades.
+
+```sh
+oc -n openshift-config patch cm admin-acks --patch '{"data":{"ack-4.19-admissionregistration-v1beta1-api-removals-in-4.20":"true"}}' --type=merge
+```
+
+### Upgrade Screens
+
+![HCP Upgrade 1](images/hcp-balance-slb-upgrade-1.avif "HCP Upgrade Screen 1")
+
+![HCP Upgrade 2](images/hcp-balance-slb-upgrade-2.avif "HCP Upgrade Screen 2")
+
+![HCP Upgrade 3](images/hcp-balance-slb-upgrade-3.avif "HCP Upgrade Screen 3")
+
+![HCP Upgrade 4](images/hcp-balance-slb-upgrade-4.avif "HCP Upgrade Screen 4")
+
+![HCP Upgrade 5](images/hcp-balance-slb-upgrade-5.avif "HCP Upgrade Screen 5")
+
+![HCP Upgrade 6](images/hcp-balance-slb-upgrade-6.avif "HCP Upgrade Screen 6")
+
+![HCP Upgrade 7](images/hcp-balance-slb-upgrade-7.avif "HCP Upgrade Screen 7")
+
+---
+
 ## Quick Checklist
 
 Before starting (one time):
@@ -443,6 +480,6 @@ After all nodes:
 
 ## References
 
-- Full documentation: `OPENSHIFT-VIRTUALIZATION-VMNET-BALANCE-SLB.md`
-- Migration script: `migrate-to-ovs-slb.sh`
-- Verification script: `check-cluster-bond.sh`
+- Full documentation: [OPENSHIFT-VIRTUALIZATION-VMNET-BALANCE-SLB.md](./OPENSHIFT-VIRTUALIZATION-VMNET-BALANCE-SLB.md)
+- Migration script: [migrate-to-ovs-slb.sh](./migrate-to-ovs-slb.sh)
+- Verification script: [check-cluster-bond.sh](./check-cluster-bond.sh)
