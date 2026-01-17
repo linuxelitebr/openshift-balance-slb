@@ -398,11 +398,11 @@ New files are created automatically for the OVS configuration:
 
 ---
 
-![Before Migration (Linux Bond – agent-config default)](linux-bond.avif)
+![Before Migration (Linux Bond – agent-config default)](images/linux-bond.avif)
 
 ---
 
-![After Migration (OVS Bond – balance-slb)](ovs-bond.avif)
+![After Migration (OVS Bond – balance-slb)](images/ovs-bond.avif)
 
 ---
 
@@ -546,7 +546,7 @@ The balance-slb configuration persists through HCP upgrades:
 
 ### Helper Script
 
-A [helper script](./generate-balance-slb-configmap-multi.sh) is available to generate the ConfigMap from a node inventory file:
+A [helper script](./scripts/generate-balance-slb-configmap-multi.sh) is available to generate the ConfigMap from a node inventory file:
 
 ```bash
 # Create nodes.conf with your node inventory
