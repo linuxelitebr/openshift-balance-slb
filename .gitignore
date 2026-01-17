@@ -210,3 +210,6 @@ openshift-balance-slb.code-workspace
 .gitignore
 
 *.bkp
+
+kcs/
+mc-testing/
