@@ -22,7 +22,7 @@ Customers deploying OpenShift using the agent-based installer on bare metal need
 |-----------|--------------------------------|-------------------|
 | active-backup | Yes | None |
 | 802.3ad (LACP) | Yes | LACP/LAG required |
-| balance-xor | Yes | None with `xmit_hash_policy: vlan+srcmac` |
+| balance-xor | Yes | None when using `options: xmit_hash_policy: vlan+srcmac` |
 | balance-slb | **No** | None |
 
 OVS balance-slb provides load distribution across links without requiring switch-side configuration, but cannot be configured during agent-based installation and must be applied post-installation via MachineConfig.
@@ -123,7 +123,7 @@ After the agent-based installation completes, there are two approaches for apply
 
 | Option | Use Case | Behavior |
 |--------|----------|----------|
-| **Option A: Standard Rollout** | Non-critical environments, maintenance windows | MCO automatically reboots all nodes in the pool (rolling) |
+| **Option A: Standard Rollout** | Non-critical environments, maintenance windows, new clusters | MCO automatically reboots all nodes in the pool (rolling) |
 | **Option B: Controlled Rollout** | Production environments, node-by-node control | You control which nodes are updated via labeling |
 
 ---
@@ -206,7 +206,7 @@ The MCO will:
 4. Uncordon the node
 5. Proceed to the next node
 
-**Note**: If the MachineConfigPool is updated on all nodes but the nodes do not reboot automatically, perform a manual reboot to ensure the balance-slb configuration takes effect. Wait for the restarted node to become “Ready” before restarting the next one.
+**Note**: If the MachineConfigPool reports an updated state but the nodes do not reboot automatically, perform a manual reboot. Follow the same sequence (cordon, drain, reboot, uncordon), and wait for the node to return to the **Ready** state before proceeding with the next node. This ensures that the **balance-slb** configuration is applied correctly.
 
 #### Step 5: Verify Configuration
 
@@ -246,7 +246,7 @@ Network reconfiguration is applied post-installation via the Machine Config Oper
 
 ##### Step 1: Create Node Inventory File
 
-Same as Option A.
+Same as "Option A".
 
 ##### Step 2: Generate MachineConfig with Custom MCP
 
@@ -367,7 +367,7 @@ The rollout will not start while the pool is paused.
 oc apply -f master-balance-slb-machineconfig.yaml
 ```
 
-* See Option A, Step 2 for generating MachineConfig for masters.
+* See "Option A", "Step 2" for generating MachineConfig for masters.
 
 ##### Step 3: Unpause when ready
 
