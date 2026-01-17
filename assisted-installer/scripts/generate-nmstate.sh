@@ -1,14 +1,14 @@
 #!/bin/bash
 #
-# generate-nmstate-corrected.sh
+# generate-nmstate.sh
 #
 # Generates nmstate configuration for OVS balance-slb with all fixes applied.
 # Compatible with OpenShift 4.18, 4.19, 4.20+
 #
-# Usage: ./generate-nmstate-corrected.sh <short-hostname> <ip_address> <nic1> <nic2> <gateway> <dns1> <dns2>
+# Usage: ./generate-nmstate.sh <short-hostname> <ip_address> <nic1> <nic2> <gateway> <dns1> <dns2>
 #
 # Example:
-#   ./generate-nmstate-corrected.sh ocp-dualstack-0 10.132.254.11 ens33 ens34 10.132.254.10 10.132.254.103 10.132.254.102
+#   ./generate-nmstate.sh ocp-dualstack-0 10.132.254.11 ens33 ens34 10.132.254.10 10.132.254.103 10.132.254.102
 #
 # IMPORTANT: Use SHORT hostname (not FQDN)
 #

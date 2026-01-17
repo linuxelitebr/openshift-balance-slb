@@ -7,6 +7,7 @@ Deploy OpenShift on bare metal with OVS bond in `balance-slb` mode - no switch c
 This repository provides manifests and documentation for deploying OpenShift clusters using Open vSwitch (OVS) with `balance-slb` bonding mode. This approach enables NIC redundancy and load balancing without requiring LACP or any physical switch configuration.
 
 **Ideal for:**
+
 - Bare metal clusters
 - OpenShift Virtualization (CNV) workloads
 - Disconnected or constrained environments
@@ -14,7 +15,7 @@ This repository provides manifests and documentation for deploying OpenShift clu
 
 ## Visual Guide
 
-For convenience, there’s also a more detailed guide **[here](docs/detailed-guide.md)**, and a rendered version with diagrams and screenshots available **[here](https://linuxelite.com.br/blog/openshift-balance-slb/)**. The Git repo remains the canonical source.
+For convenience, there’s also a more detailed guide **[here](assisted-installer/detailed-guide.md)**, and a rendered version with diagrams and screenshots available **[here](https://linuxelite.com.br/blog/openshift-balance-slb/)**. The Git repo remains the canonical source.
 
 ## Architecture
 
@@ -47,6 +48,7 @@ For convenience, there’s also a more detailed guide **[here](docs/detailed-gui
 3. **Note discovered hostnames** - filenames must match exactly
 
 4. **Upload MachineConfigs** to `openshift/` folder:
+
    ```
    openshift/05-nmstate-configuration-master.yml
    openshift/05-nmstate-configuration-worker.yml
@@ -124,46 +126,11 @@ Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: 
 Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + echo 'No configuration found at /etc/nmstate/openshift/ocp-dualstack-1.yml or /etc/nmstate/openshift/cluster.yml'
 Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: No configuration found at /etc/nmstate/openshift/ocp-dualstack-1.yml or /etc/nmstate/openshift/cluster.yml
 Jan 10 21:15:53 ocp-dualstack-1.baremetalbr.com nmstate-configuration.sh[2145]: + exit 0
-
-
-
-# Renomear os arquivos para hostname curto
-cd /etc/nmstate/openshift/
-mv ocp-dualstack-0.baremetalbr.com.yml ocp-dualstack-0.yml
-mv ocp-dualstack-1.baremetalbr.com.yml ocp-dualstack-1.yml
-mv ocp-dualstack-2.baremetalbr.com.yml ocp-dualstack-2.yml
-
-# Remover o flag "applied" se existir
-rm -f /etc/nmstate/openshift/applied
-
-# Re-executar o serviço
-systemctl restart nmstate-configuration.service
-
-# Verificar
-systemctl status nmstate-configuration.service
-
-# Ver se applied existe (impede re-execução)
-cat /etc/nmstate/openshift/applied
-
-# Ver configuração atual do nmstate
-cat /etc/nmstate/*.yml
-
-# Reboot
-
-# Verificar se os arquivos nmstate ainda existem
-ls -la /etc/nmstate/openshift/
-
-# Status do serviço
-systemctl status nmstate-configuration.service
-
-# Logs do boot
-journalctl -u nmstate-configuration.service -b
-journalctl -u ovs-configuration.service -b
 ```
 
 ## Documentation
 
-- [Detailed Deployment Guide](docs/detailed-guide.md)
+- [Detailed Deployment Guide](assisted-installer/detailed-guide.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## References
@@ -171,10 +138,3 @@ journalctl -u ovs-configuration.service -b
 - [OVS Bonding Documentation](https://docs.openvswitch.org/en/stable/topics/bonding/)
 - [OKD - Enabling OVS balance-slb mode](https://docs.okd.io/4.19/installing/installing_bare_metal/upi/installing-bare-metal.html#enabling-OVS-balance-slb-mode_installing-bare-metal)
 - [OpenShift NMState Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/networking/kubernetes-nmstate)
-
-## Contributing
-
-Contributions welcome! Future plans include:
-- Agent-based Installer support
-- Day-2 NNCP configurations
-- Dual-stack (IPv4/IPv6) examples
