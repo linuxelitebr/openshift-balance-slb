@@ -17,6 +17,9 @@
 #   worker-02   10.1.1.11   25      100     10.1.1.1        ens33   ens34   10.1.1.2,10.1.1.3
 #
 # IMPORTANT: HOSTNAME must be the SHORT hostname (output of 'hostname -s')
+#
+# V 1.0.0
+# Andre Rocha
 
 set -euo pipefail
 
