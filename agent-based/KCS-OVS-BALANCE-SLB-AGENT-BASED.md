@@ -206,7 +206,7 @@ The MCO will:
 4. Uncordon the node
 5. Proceed to the next node
 
-**Note**: If the MachineConfigPool is updated on all nodes but the nodes do not reboot automatically, perform a manual reboot to ensure the balance-slb configuration takes effect.
+**Note**: If the MachineConfigPool is updated on all nodes but the nodes do not reboot automatically, perform a manual reboot to ensure the balance-slb configuration takes effect. Wait for the restarted node to become “Ready” before restarting the next one.
 
 #### Step 5: Verify Configuration
 
